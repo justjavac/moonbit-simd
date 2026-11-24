@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and cover (${{ matrix.flag }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            flag: linux
+          - os: macos-latest
+            flag: macos
+          - os: windows-latest
+            flag: windows
+    env:
+      # The SIMD API is experimental; the validated compiler is recorded in README.md.
+      MOONBIT_INSTALL_VERSION: nightly
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js for the JavaScript backend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up the native Windows compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install MoonBit
+        uses: ./.github/actions/setup-moonbit
+        with:
+          version: nightly
+
+      - name: Record toolchain versions
+        run: moon version --all
+
+      - name: Check all supported backends
+        run: moon check --target all --deny-warn
+
+      - name: Generate public interfaces
+        run: moon info
+
+      - name: Format MoonBit sources
+        run: moon fmt
+
+      - name: Check benchmark automation formatting
+        run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx
+
+      - name: Test benchmark report validation
+        run: moon run scripts/benchmark_report.mbtx --self-test
+
+      - name: Verify generated and formatted files
+        run: git diff --exit-code
+
+      - name: Test all backends with coverage
+        run: moon test --target all --enable-coverage
+
+      - name: Generate the crc32 Cobertura report
+        run: moon coverage analyze -p justjavac/crc32 -- -f cobertura -o coverage-crc32-${{ matrix.flag }}.xml
+
+      - name: Save the coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.flag }}
+          path: coverage-crc32-${{ matrix.flag }}.xml
+          if-no-files-found: error
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
+          files: coverage-crc32-${{ matrix.flag }}.xml
+          flags: ${{ matrix.flag }}
+          name: crc32-${{ matrix.flag }}
+          disable_search: true
+          fail_ci_if_error: true

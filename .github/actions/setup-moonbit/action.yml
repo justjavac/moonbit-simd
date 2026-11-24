@@ -1,0 +1,26 @@
+name: Set up MoonBit
+description: Install the selected official MoonBit toolchain on the runner
+inputs:
+  version:
+    description: Published toolchain version or channel
+    required: false
+    default: nightly
+runs:
+  using: composite
+  steps:
+    - name: Install on Linux and macOS
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        MOONBIT_INSTALL_VERSION: ${{ inputs.version }}
+      run: |
+        curl --fail --silent --show-error --location https://cli.moonbitlang.com/install/unix.sh | bash -s "$MOONBIT_INSTALL_VERSION"
+        echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+    - name: Install on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        MOONBIT_INSTALL_VERSION: ${{ inputs.version }}
+      run: |
+        Invoke-RestMethod -Uri 'https://cli.moonbitlang.com/install/powershell.ps1' | Invoke-Expression
+        Join-Path $env:USERPROFILE '.moon/bin' | Out-File -LiteralPath $env:GITHUB_PATH -Encoding utf8 -Append

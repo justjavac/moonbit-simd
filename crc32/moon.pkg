@@ -1,0 +1,16 @@
+import {
+  "moonbitlang/core/simd",
+}
+
+import {
+  "moonbitlang/core/bench",
+} for "wbtest"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+// SIMD intrinsics are intentionally experimental; the import is unused on
+// backends where only the scalar implementation is compiled.
+
+warnings = "-alert_experimental-unused_package"

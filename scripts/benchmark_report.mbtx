@@ -1,0 +1,340 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+----
+
+///|
+/// Retrieves a required JSON field with a useful schema error.
+fn field(value : Json, key : String) -> Json raise {
+  match value {
+    Object(fields) =>
+      fields.get(key).unwrap_or_else(() => fail("Missing field: \{key}"))
+    _ => fail("Expected an object for field \{key}")
+  }
+}
+
+///|
+/// Retrieves a required JSON string without silently coercing its type.
+fn text(value : Json, key : String) -> String raise {
+  match field(value, key) {
+    String(contents) => contents
+    _ => fail("Expected a string: \{key}")
+  }
+}
+
+///|
+/// Retrieves a finite numeric statistic from a benchmark summary.
+fn number(value : Json, key : String) -> Double raise {
+  match field(value, key) {
+    Number(contents, ..) => {
+      guard contents.is_finite() else { fail("Non-finite statistic: \{key}") }
+      contents
+    }
+    _ => fail("Expected a number: \{key}")
+  }
+}
+
+///|
+/// Retrieves a required JSON array from the input schema.
+fn array(value : Json, key : String) -> Array[Json] raise {
+  match field(value, key) {
+    Array(contents) => contents
+    _ => fail("Expected an array: \{key}")
+  }
+}
+
+///|
+/// Rounds display numbers to three decimal places while preserving original JSON.
+fn decimal(value : Double) -> String {
+  ((value * 1000).round() / 1000).to_string()
+}
+
+///|
+/// Quotes untrusted runner metadata safely inside a Markdown table cell.
+fn cell(value : String) -> String {
+  value
+  .replace(old="|", new="\\|")
+  .replace(old="\r", new=" ")
+  .replace(old="\n", new=" ")
+}
+
+///|
+/// Parses the benchmark case contract without rounding UInt64 suffix lengths.
+fn case_parts(summary : Json) -> Array[String] raise {
+  let pieces = text(summary, "name")
+    .split(":")
+    .map(part => part.to_owned())
+    .to_array()
+  guard pieces.length() == 4 else { fail("Invalid benchmark case name") }
+  pieces
+}
+
+///|
+/// Computes GiB per second only for workloads that actually read input bytes.
+fn throughput(workload : String, bytes : String, mean : Double) -> String raise {
+  if workload == "combine" || bytes == "0" {
+    "n/a"
+  } else {
+    let length = @string.parse_int(bytes)
+    decimal(length.to_double() * 1000000 / mean / 1073741824)
+  }
+}
+
+///|
+/// Validates nonempty unique cases and complete timing statistics before reporting.
+fn validate_backend(value : Json, package_dir : String) -> Unit raise {
+  let backend = text(value, "backend")
+  guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
+    fail("Unexpected backend: \{backend}")
+  }
+  guard text(value, "time_unit") == "microseconds" else {
+    fail("Unexpected timing unit")
+  }
+  let summaries = array(value, "summaries")
+  guard !summaries.is_empty() &&
+    (package_dir != "crc32" || summaries.length() == 69) else {
+    fail("Incomplete benchmark inventory")
+  }
+  let names : Map[String, Unit] = Map([])
+  for summary in summaries {
+    let name = text(summary, "name")
+    let _ = case_parts(summary)
+    guard !names.contains(name) else { fail("Duplicate benchmark: \{name}") }
+    names[name] = ()
+    let mean = number(summary, "mean")
+    let minimum = number(summary, "min")
+    let maximum = number(summary, "max")
+    let median = number(summary, "median")
+    let tolerance = maximum.abs() * 0.000000000001 + 0.000000000001
+    guard mean > 0 &&
+      minimum >= 0 &&
+      minimum <= mean + tolerance &&
+      mean <= maximum + tolerance &&
+      minimum <= median + tolerance &&
+      median <= maximum + tolerance else {
+      fail("Invalid timing range: \{name}")
+    }
+    guard number(summary, "std_dev") >= 0 &&
+      number(summary, "std_dev_pct") >= 0 &&
+      number(summary, "runs") == 10 &&
+      number(summary, "batch_size") >= 1 else {
+      fail("Invalid sample metadata: \{name}")
+    }
+  }
+}
+
+///|
+/// Rejects local measurements and mixed CI revisions or attempts in a published snapshot.
+fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise {
+  guard records.length() == 3 else {
+    fail("A snapshot requires all three operating systems")
+  }
+  let first = records[0]
+  let revision = text(first, "source_commit")
+  let run = text(first, "run_id")
+  guard revision.length() == 40 && run != "" else {
+    fail("Missing CI provenance")
+  }
+  let operating_systems : Map[String, Unit] = Map([])
+  for record in records {
+    let os = text(record, "os")
+    guard ["linux", "macos", "windows"].contains(os) &&
+      !operating_systems.contains(os) else {
+      fail("Invalid or duplicate operating system: \{os}")
+    }
+    operating_systems[os] = ()
+    guard text(record, "repository") == text(first, "repository") else {
+      fail("Mixed benchmark repositories")
+    }
+    guard text(record, "source") == "github-actions" &&
+      text(record, "module") == "justjavac/\{package_dir}" &&
+      text(record, "source_commit") == revision &&
+      text(record, "run_id") == run &&
+      text(record, "run_attempt") == text(first, "run_attempt") else {
+      fail("Mixed or non-CI benchmark provenance")
+    }
+    let expected_url = "https://github.com/\{text(record, "repository")}/actions/runs/\{run}"
+    guard text(record, "run_url") == expected_url else {
+      fail("Unexpected CI run URL")
+    }
+    let backends = array(record, "backends")
+    guard backends.length() == 4 else { fail("Missing backend results") }
+    let backend_names : Map[String, Unit] = Map([])
+    for backend in backends {
+      let name = text(backend, "backend")
+      guard !backend_names.contains(name) else { fail("Duplicate backend") }
+      backend_names[name] = ()
+      validate_backend(backend, package_dir)
+    }
+    guard text(field(record, "cpu"), "model") != "" else {
+      fail("Missing CPU model")
+    }
+  }
+}
+
+///|
+/// Produces a concise paired comparison for large one-shot input on one runner.
+fn comparisons(builder : StringBuilder, backend : Json) -> Unit raise {
+  let records : Map[String, Json] = Map([])
+  for summary in array(backend, "summaries") {
+    records[text(summary, "name")] = summary
+  }
+  builder.write_string(
+    "| Bytes | Scalar mean (ns) | SIMD request mean (ns) | Ratio (scalar/request) |\n| --- | --- | --- | --- |\n",
+  )
+  for size in ["64", "1024", "4096", "65536", "1048576"] {
+    let scalar = records.get("hash:scalar:\{size}:0")
+    let requested = records.get("hash:simd-request:\{size}:0")
+    if scalar is Some(s) && requested is Some(v) {
+      let scalar_mean = number(s, "mean")
+      let requested_mean = number(v, "mean")
+      let ratio = decimal(scalar_mean / requested_mean)
+      builder.write_string(
+        "| \{size} | \{decimal(scalar_mean * 1000)} | \{decimal(requested_mean * 1000)} | \{ratio}x |\n",
+      )
+    }
+  }
+  builder.write_string(
+    "\nA ratio above 1 means the SIMD request was faster for that case. On `wasm-gc` and `js`, the SIMD request uses the scalar fallback.\n\n",
+  )
+}
+
+///|
+/// Renders every case with latency, variability, throughput, and sampling metadata.
+fn detailed_results(builder : StringBuilder, backend : Json) -> Unit raise {
+  builder.write_string(
+    "| Workload | Mode | Bytes / suffix length | Offset / chunk bytes | Mean +/- SD (ns) | Median (ns) | Min..max (ns) | CV (%) | GiB/s | Samples x batch |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+  )
+  for summary in array(backend, "summaries") {
+    let parts = case_parts(summary)
+    let workload = parts[0]
+    let mean = number(summary, "mean")
+    let stddev = number(summary, "std_dev")
+    let median = number(summary, "median")
+    let minimum = number(summary, "min")
+    let maximum = number(summary, "max")
+    let variation = number(summary, "std_dev_pct")
+    let variability = if variation >= 5 { " (variable)" } else { "" }
+    let speed = throughput(workload, parts[2], mean)
+    let samples = decimal(number(summary, "runs"))
+    let batch = decimal(number(summary, "batch_size"))
+    builder.write_string(
+      "| \{cell(workload)} | \{cell(parts[1])} | \{cell(parts[2])} | \{cell(parts[3])} | \{decimal(mean * 1000)} +/- \{decimal(stddev * 1000)} | \{decimal(median * 1000)} | \{decimal(minimum * 1000)}..\{decimal(maximum * 1000)} | \{decimal(variation)}\{variability} | \{speed} | \{samples} x \{batch} |\n",
+    )
+  }
+  builder.write_string("\n")
+}
+
+///|
+/// Builds the complete module Markdown report from a validated CI snapshot.
+fn report(package_dir : String, records : Array[Json]) -> String raise {
+  validate_snapshot(records, package_dir)
+  let first = records[0]
+  let revision = text(first, "source_commit")
+  let repository = text(first, "repository")
+  let run = text(first, "run_id")
+  let run_url = text(first, "run_url")
+  let builder = StringBuilder()
+  builder.write_string("# justjavac/\{package_dir} Benchmark Report\n\n")
+  builder.write_string(
+    "- Source commit: [\{revision}](https://github.com/\{repository}/commit/\{revision})\n- CI run: [\{run}](\{run_url}) (attempt \{text(first, "run_attempt")})\n- Coverage: Linux, macOS, and Windows; native, Wasm, Wasm GC, and JavaScript.\n- Complete machine-readable snapshot: [BENCHMARK-DATA.json](BENCHMARK-DATA.json).\n\n",
+  )
+  builder.write_string(
+    "## Method\n\nAll backends run sequentially within each OS job. Both implementation choices are measured in the same release benchmark binary using identical input views. The input is deterministic binary data generated outside the timed callbacks.\n\nThe suite contains 69 cases per backend: 52 one-shot cases over 13 lengths and offsets 0/1; 10 incremental cases over five chunk sizes; and seven combination cases including UInt64-sized virtual zero suffixes. Streaming timings include hasher creation and updates. Combination timings read no payload bytes, so their throughput is not reported.\n\nMoonBit adaptively chooses an approximately 100 ms batch, takes 10 batch samples, and applies 5% winsorization before reporting statistics. Reported times include the `bench.keep` optimizer barrier. Values below are rounded to 0.001 ns; the JSON preserves all original statistics, including quartiles, variance, median absolute deviation, and IQR. CV at or above 5% is marked variable and is not a regression verdict.\n\nThe SIMD request uses vector slicing on native/Wasm and scalar fallbacks on Wasm GC/JavaScript; inputs shorter than 16 bytes also use scalar tails. Hosted runner hardware and load can change between CI runs. Compare implementations within a runner/backend; these measurements do not establish universal cross-platform speed rankings.\n\n",
+  )
+  for record in records {
+    let os = text(record, "os")
+    let cpu = field(record, "cpu")
+    builder.write_string("## \{os}\n\n")
+    builder.write_string(
+      "| Metadata | Value |\n| --- | --- |\n| Runner | \{cell(text(record, "runner_label"))} |\n| Image | \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} |\n| CPU | \{cell(text(cpu, "model"))} |\n| Architecture | \{cell(text(cpu, "architecture"))} |\n| Logical CPUs | \{cell(field(cpu, "logical_cpus").stringify())} |\n| Node.js | \{cell(text(record, "node"))} |\n\n",
+    )
+    builder.write_string(
+      "Toolchain:\n\n```text\n\{text(record, "toolchain")}\n```\n\n",
+    )
+    for backend in array(record, "backends") {
+      let name = text(backend, "backend")
+      builder.write_string("### \{name}\n\n")
+      builder.write_string(
+        "Measured from \{text(backend, "started_at_utc")} to \{text(backend, "finished_at_utc")} (UTC).\n\n```text\n\{text(backend, "command")}\n```\n\n",
+      )
+      comparisons(builder, backend)
+      detailed_results(builder, backend)
+    }
+  }
+  builder.write_string(
+    "## Reproduction and data retention\n\nRun `moon run scripts/benchmark.mbtx \{package_dir}` from the workspace for a local measurement, or dispatch the Benchmarks workflow for a CI snapshot. Generate a report from merged CI artifacts with `moon run scripts/benchmark_report.mbtx _build/benchmarks _build/benchmark-report`. Local measurements are explicitly marked local and cannot be published by this report generator as CI results.\n\nThe CI run retains raw logs and per-OS JSON artifacts for 90 days. The checked-in BENCHMARK-DATA.json preserves the complete statistics and provenance for this report after artifacts expire. This snapshot is committed deliberately; CI does not automatically push changing measurements to the source branch.\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
+fn self_test() -> Unit raise {
+  let valid : Json = {
+    "name": "combine:gf2:18446744073709551615:0",
+    "mean": 1.0,
+  }
+  assert_eq(case_parts(valid)[2], "18446744073709551615")
+  assert_eq(throughput("combine", "18446744073709551615", 1.0), "n/a")
+  assert_eq(throughput("hash", "0", 1.0), "n/a")
+  assert_eq(cell("a|b\nc"), "a\\|b c")
+  try validate_snapshot([], "crc32") catch {
+    _ => ()
+  } noraise {
+    _ => fail("An incomplete snapshot must fail")
+  }
+  try number({ "mean": "invalid" }, "mean") catch {
+    _ => ()
+  } noraise {
+    _ => fail("A malformed numeric statistic must fail")
+  }
+}
+
+///|
+/// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
+async fn main {
+  let arguments = @env.args()
+  if arguments.length() == 2 && arguments[1] == "--self-test" {
+    self_test()
+    println("Benchmark report self-test passed")
+    return
+  }
+  guard arguments.length() == 3 else {
+    fail(
+      "Usage: moon run scripts/benchmark_report.mbtx <input-directory> <output-directory>",
+    )
+  }
+  let input = arguments[1]
+  let output = arguments[2]
+  let members = @fs.readdir(input, sort=true)
+  guard !members.is_empty() else { fail("No module artifacts were found") }
+  for package_dir in members {
+    guard package_dir != "." &&
+      package_dir != ".." &&
+      package_dir.find("/") is None &&
+      package_dir.find("\\") is None else {
+      fail("Invalid module directory")
+    }
+    let records : Array[Json] = []
+    for os in ["linux", "macos", "windows"] {
+      records.push(
+        @json.parse(@fs.read_text("\{input}/\{package_dir}/\{os}.json")),
+      )
+    }
+    let markdown = report(package_dir, records)
+    let directory = "\{output}/\{package_dir}"
+    @fs.mkdir(directory, recursive=true, allow_existing=true)
+    @fs.write_text("\{directory}/BENCHMARK.md", markdown)
+    @fs.write_text(
+      "\{directory}/BENCHMARK-DATA.json",
+      Json(records).stringify(indent=2),
+    )
+    println("Generated \{directory}/BENCHMARK.md")
+  }
+}

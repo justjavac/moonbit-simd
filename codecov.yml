@@ -1,0 +1,26 @@
+codecov:
+  notify:
+    after_n_builds: 3
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+    patch:
+      default:
+        target: auto
+
+flags:
+  linux:
+    carryforward: false
+  macos:
+    carryforward: false
+  windows:
+    carryforward: false
+
+comment:
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: true
+  after_n_builds: 3

@@ -1,0 +1,253 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+----
+
+///|
+/// Reads an optional runner environment value without exposing credentials.
+fn environment(name : String) -> String {
+  @env.get_env_var(name).unwrap_or("")
+}
+
+///|
+/// Runs an explicit program and returns its checked standard output.
+async fn capture(program : String, arguments : Array[String]) -> String {
+  let output = @shell.Cmd(program, arguments).output(max_output_bytes=2097152)
+  if output.exit_code() != 0 {
+    fail("Command failed: \{program}\n\{output.stderr()}")
+  }
+  output.stdout().trim().to_owned()
+}
+
+///|
+/// Identifies the operating system for a CI or local benchmark run.
+async fn operating_system() -> String {
+  match environment("RUNNER_OS") {
+    "Windows" => "windows"
+    "Linux" => "linux"
+    "macOS" => "macos"
+    _ =>
+      if environment("OS") == "Windows_NT" {
+        "windows"
+      } else {
+        match capture("uname", ["-s"]) {
+          "Linux" => "linux"
+          "Darwin" => "macos"
+          other => fail("Unsupported benchmark host: \{other}")
+        }
+      }
+  }
+}
+
+///|
+/// Records a UTC timestamp using the host's standard date provider.
+async fn timestamp(os : String) -> String {
+  if os == "windows" {
+    capture("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-Command", "[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')",
+    ])
+  } else {
+    capture("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  }
+}
+
+///|
+/// Captures CPU identity and logical CPU count without assuming a processor family.
+async fn cpu_metadata(os : String) -> Json {
+  if os == "windows" {
+    let raw = capture("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Processor | Select-Object -First 1 Name, NumberOfCores, NumberOfLogicalProcessors | ConvertTo-Json -Compress",
+    ])
+    let details = @json.parse(raw)
+    match details {
+      {
+        "Name": String(model),
+        "NumberOfLogicalProcessors": Number(count, ..),
+        ..
+      } =>
+        {
+          "model": model,
+          "logical_cpus": count,
+          "architecture": environment("PROCESSOR_ARCHITECTURE"),
+          "details": details,
+        }
+      _ => fail("Unexpected Windows CPU metadata")
+    }
+  } else if os == "macos" {
+    {
+      "model": capture("sysctl", ["-n", "machdep.cpu.brand_string"]),
+      "logical_cpus": capture("sysctl", ["-n", "hw.logicalcpu"]),
+      "architecture": capture("uname", ["-m"]),
+      "system_version": capture("sw_vers", ["-productVersion"]),
+    }
+  } else {
+    let details = @json.parse(capture("lscpu", ["--json"]))
+    let mut model = ""
+    let mut cpus = ""
+    match details {
+      { "lscpu": Array(entries), .. } =>
+        for entry in entries {
+          match entry {
+            { "field": String("Model name:"), "data": String(value), .. } =>
+              model = value
+            { "field": String("CPU(s):"), "data": String(value), .. } =>
+              cpus = value
+            _ => ()
+          }
+        }
+      _ => fail("Unexpected Linux CPU metadata")
+    }
+    guard model != "" && cpus != "" else { fail("Missing Linux CPU identity") }
+    {
+      "model": model,
+      "logical_cpus": cpus,
+      "architecture": capture("uname", ["-m"]),
+      "details": details,
+    }
+  }
+}
+
+///|
+/// Extracts named structured summaries from the benchmark program's output.
+fn summaries(output : String) -> Array[Json] raise {
+  let records = []
+  let names : Map[String, Unit] = Map([])
+  let marker = "BENCHMARK_RESULTS "
+  for line in output.split("\n") {
+    if line.find(marker) is Some(position) {
+      match @json.parse(line[position + marker.length():].trim()) {
+        Array(values) =>
+          for value in values {
+            match value {
+              {
+                "name": String(name),
+                "mean": Number(mean, ..),
+                "runs": Number(runs, ..),
+                "batch_size": Number(batch, ..),
+                ..
+              } => {
+                guard !names.contains(name) &&
+                  mean.is_finite() &&
+                  mean > 0 &&
+                  runs == 10 &&
+                  batch >= 1 else {
+                  fail("Invalid or duplicate benchmark: \{name}")
+                }
+                names[name] = ()
+                records.push(value)
+              }
+              _ => fail("Malformed benchmark summary")
+            }
+          }
+        _ => fail("Benchmark marker did not contain a JSON array")
+      }
+    }
+  }
+  guard !records.is_empty() else {
+    fail("No structured benchmark results were produced")
+  }
+  records
+}
+
+///|
+/// Runs each backend sequentially and writes reproducible result and log artifacts.
+async fn main {
+  let arguments = @env.args()
+  guard arguments.length() >= 2 else {
+    fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+  }
+  let os = operating_system()
+  let cpu = cpu_metadata(os)
+  let toolchain = capture("moon", ["version", "--all"])
+  let node = capture("node", ["--version"])
+  let revision = if environment("GITHUB_SHA") != "" {
+    environment("GITHUB_SHA")
+  } else {
+    capture("git", ["rev-parse", "HEAD"]) catch {
+      _ => "uncommitted"
+    }
+  }
+  let repository = environment("GITHUB_REPOSITORY")
+  let run_id = environment("GITHUB_RUN_ID")
+  let run_url = if run_id == "" {
+    ""
+  } else {
+    "https://github.com/\{repository}/actions/runs/\{run_id}"
+  }
+  for package_dir in arguments[1:] {
+    guard package_dir != "" &&
+      package_dir != "." &&
+      package_dir != ".." &&
+      package_dir.find("/") is None &&
+      package_dir.find("\\") is None else {
+      fail("A module must be a direct workspace module directory")
+    }
+    let directory = "_build/benchmarks/\{package_dir}"
+    @fs.mkdir("\{directory}/\{os}", recursive=true, allow_existing=true)
+    let backends : Array[Json] = []
+    for backend in ["native", "wasm", "wasm-gc", "js"] {
+      let command = [
+        "bench",
+        "--target",
+        backend,
+        "--release",
+        "--no-parallelize",
+        "-p",
+        "justjavac/\{package_dir}",
+      ]
+      println("Benchmarking \{package_dir} on \{os}/\{backend}")
+      let started = timestamp(os)
+      let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
+      @fs.write_text(
+        "\{directory}/\{os}/\{backend}.log",
+        output.stdout() + output.stderr(),
+      )
+      guard output.exit_code() == 0 else {
+        fail(
+          "Benchmark failed for \{package_dir}/\{backend}; see the saved log",
+        )
+      }
+      let records = summaries(output.stdout())
+      guard package_dir != "crc32" || records.length() == 69 else {
+        fail("Expected 69 crc32 cases, received \{records.length()}")
+      }
+      backends.push({
+        "backend": backend,
+        "command": "moon " + command.join(" "),
+        "started_at_utc": started,
+        "finished_at_utc": timestamp(os),
+        "time_unit": "microseconds",
+        "summaries": Json(records),
+      })
+    }
+    let result : Json = {
+      "schema_version": 1,
+      "module": "justjavac/\{package_dir}",
+      "source": if run_id == "" {
+        "local"
+      } else {
+        "github-actions"
+      },
+      "source_commit": revision,
+      "repository": repository,
+      "run_id": run_id,
+      "run_attempt": environment("GITHUB_RUN_ATTEMPT"),
+      "run_url": run_url,
+      "os": os,
+      "runner_label": environment("BENCHMARK_RUNNER_LABEL"),
+      "image_os": environment("ImageOS"),
+      "image_version": environment("ImageVersion"),
+      "cpu": cpu,
+      "toolchain": toolchain,
+      "node": node,
+      "backends": Json(backends),
+    }
+    @fs.write_text("\{directory}/\{os}.json", result.stringify(indent=2))
+    println("Saved \{directory}/\{os}.json")
+  }
+}

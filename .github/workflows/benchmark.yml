@@ -1,0 +1,90 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "moon.work"
+      - "**/*.mbt"
+      - "**/moon.mod"
+      - "**/moon.pkg"
+      - "scripts/benchmark*.mbtx"
+      - ".github/workflows/benchmark.yml"
+      - ".github/actions/setup-moonbit/action.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    name: Measure (${{ matrix.flag }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            flag: linux
+          - os: macos-latest
+            flag: macos
+          - os: windows-latest
+            flag: windows
+    env:
+      BENCHMARK_RUNNER_LABEL: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Prepare the Windows native compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Install MoonBit
+        uses: ./.github/actions/setup-moonbit
+        with:
+          version: nightly
+      - name: Verify correctness before measuring
+        run: moon test --target all
+      - name: Measure crc32 on all backends sequentially
+        run: moon run scripts/benchmark.mbtx crc32
+      - name: Preserve complete measurements and raw logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-raw-${{ matrix.flag }}
+          path: _build/benchmarks/
+          retention-days: 90
+          if-no-files-found: warn
+
+  report:
+    name: Generate module reports
+    needs: measure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        uses: ./.github/actions/setup-moonbit
+        with:
+          version: nightly
+      - name: Collect the three operating-system artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-raw-*
+          path: _build/benchmarks/
+          merge-multiple: true
+      - name: Validate and render the complete reports
+        run: moon run scripts/benchmark_report.mbtx _build/benchmarks _build/benchmark-report
+      - name: Publish BENCHMARK.md and complete JSON snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: _build/benchmark-report/
+          retention-days: 90
+          if-no-files-found: error

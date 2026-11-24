@@ -1,0 +1,27 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/crc32"
+
+// Values
+pub fn combine(UInt32, UInt32, UInt64) -> UInt32
+
+pub fn hash(BytesView, simd? : Bool) -> UInt32
+
+pub fn update(UInt32, BytesView, simd? : Bool) -> UInt32
+
+// Errors
+
+// Types and methods
+type Hasher
+pub fn Hasher::combine(Self, Self) -> Unit
+pub fn Hasher::copy(Self) -> Self
+pub fn Hasher::finalize(Self) -> UInt32
+pub fn Hasher::new(simd? : Bool) -> Self
+pub fn Hasher::new_with_initial(UInt32, simd? : Bool) -> Self
+pub fn Hasher::new_with_initial_len(UInt32, UInt64, simd? : Bool) -> Self
+pub fn Hasher::reset(Self) -> Unit
+pub fn Hasher::total_len(Self) -> UInt64
+pub fn Hasher::update(Self, BytesView) -> Unit
+
+// Type aliases
+
+// Traits
