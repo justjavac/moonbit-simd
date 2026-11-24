@@ -27,7 +27,8 @@ jobs:
         include:
           - os: ubuntu-latest
             flag: linux
-          - os: macos-latest
+          # ARM64 hosted runners failed to acquire capacity; keep macOS 26 on Intel.
+          - os: macos-26-intel
             flag: macos
           - os: windows-latest
             flag: windows
