@@ -54,6 +54,9 @@ jobs:
       - name: Record toolchain versions
         run: moon version --all
 
+      - name: Update the Mooncakes index
+        run: moon update
+
       - name: Check all supported backends
         run: moon check --target all --deny-warn
 

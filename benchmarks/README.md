@@ -4,7 +4,8 @@ This MIT-licensed module contains development-only CRC-32/ISO-HDLC comparison
 adapters. Its nested workspace links the local `justjavac/crc32` module while
 keeping third-party dependencies out of the published library.
 
-Run `moon -C benchmarks test --target all` before measuring. Results are recorded
+Run `moon update` after installing MoonBit, then
+`moon -C benchmarks test --target all` before measuring. Results are recorded
 in [crc32/BENCHMARK.md](../crc32/BENCHMARK.md), with all statistics and pinned
 dependency versions in the companion JSON snapshot.
 

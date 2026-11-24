@@ -32,6 +32,7 @@ Use the [MoonBit nightly toolchain](https://www.moonbitlang.com/download) provid
 builds require MSVC on Windows, GCC/Clang on Linux, or Xcode Command Line Tools on
 macOS; JavaScript tests require Node.js. CI uses Node.js 24 and records compiler
 versions in its logs and benchmark data.
+Run `moon update` once after installing the toolchain to initialize Mooncakes.
 
 ## Development
 

@@ -50,6 +50,8 @@ jobs:
         uses: ./.github/actions/setup-moonbit
         with:
           version: nightly
+      - name: Update the Mooncakes index
+        run: moon update
       - name: Verify correctness before measuring
         run: moon -C benchmarks test --target all
       - name: Measure crc32 on all backends sequentially
