@@ -155,11 +155,145 @@ fn summaries(output : String) -> Array[Json] raise {
 }
 
 ///|
+/// Defines every Base64 case and the actual input/output lengths behind its binary-size label.
+fn base64_inventory() -> Map[String, Json] {
+  let cases : Map[String, Json] = Map([])
+  fn add(
+    workload : String,
+    implementation : String,
+    variant : String,
+    length : Int32,
+    padding : Bool,
+    offset : Int32,
+  ) -> Unit {
+    let tail = length % 3
+    let encoded = length / 3 * 4 +
+      (if tail == 0 { 0 } else if padding { 4 } else { tail + 1 })
+    let encoding = workload.has_prefix("encode-")
+    let text_input = workload == "decode-" + variant
+    cases["\{workload}:\{implementation}:\{length}:\{offset}"] = {
+      "binary_bytes": length,
+      "input_bytes": if encoding {
+        length
+      } else {
+        encoded
+      },
+      "input_code_units": if text_input {
+        encoded
+      } else {
+        0
+      },
+      "output_bytes": if encoding {
+        encoded
+      } else if workload.has_prefix("check-") {
+        0
+      } else {
+        length
+      },
+      "input_offset": offset,
+      "offset_unit": if text_input {
+        "utf16-code-units"
+      } else {
+        "bytes"
+      },
+      "variant": variant,
+    }
+  }
+  for variant in ["standard", "standard-no-pad", "url-safe", "url-safe-no-pad"] {
+    let padding = variant == "standard" || variant == "url-safe"
+    let sizes = if variant == "standard" {
+      [0, 1, 2, 3, 16, 64, 4096, 1048576]
+    } else {
+      [2, 4096]
+    }
+    for length in sizes {
+      for
+        implementation in [
+          "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+        ] {
+        if implementation != "kujirahand" || variant == "standard" {
+          if implementation != "kujirahand" || length <= 4096 {
+            add(
+              "encode-" + variant,
+              implementation,
+              variant,
+              length,
+              padding,
+              0,
+            )
+          }
+          add("decode-" + variant, implementation, variant, length, padding, 0)
+        }
+      }
+    }
+  }
+  for length in [64, 1048576] {
+    for
+      implementation in [
+        "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+      ] {
+      if implementation != "kujirahand" || length <= 4096 {
+        add("encode-standard", implementation, "standard", length, true, 1)
+      }
+      add("decode-standard", implementation, "standard", length, true, 1)
+    }
+    for implementation in ["own-scalar", "own-simd", "moonbase"] {
+      add("decode-bytes-standard", implementation, "standard", length, true, 0)
+    }
+    for implementation in ["own-scalar", "own-simd"] {
+      for
+        workload in [
+          "encode-into-standard", "decode-into-standard", "decode-inplace-standard",
+          "check-standard",
+        ] {
+        add(workload, implementation, "standard", length, true, 0)
+      }
+    }
+  }
+  cases
+}
+
+///|
+/// Rejects substituted Base64 workloads and annotates every result with exact byte/code-unit counts.
+fn annotate_base64(records : Array[Json]) -> Unit raise {
+  let expected = base64_inventory()
+  guard records.length() == expected.length() && expected.length() == 200 else {
+    fail("Expected 200 Base64 benchmark cases")
+  }
+  for record in records {
+    match record {
+      Object(fields) => {
+        guard fields.get("name") is Some(String(name)) else {
+          fail("Missing Base64 case name")
+        }
+        guard expected.get(name) is Some(Object(metadata)) else {
+          fail("Unexpected or duplicate Base64 case: \{name}")
+        }
+        expected.remove(name)
+        for (key, value) in metadata {
+          fields[key] = value
+        }
+      }
+      _ => fail("Malformed Base64 benchmark record")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete Base64 inventory") }
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
-  guard arguments.length() >= 2 else {
-    fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+  let requested = if arguments.length() >= 2 {
+    arguments[1:].to_owned()
+  } else {
+    match environment("BENCHMARK_SCOPE") {
+      "all" => ["crc32", "url", "base64"]
+      "base64" => ["base64"]
+      "crc32" => ["crc32"]
+      "url" => ["url"]
+      _ => fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+    }
   }
   let os = operating_system()
   let cpu = cpu_metadata(os)
@@ -179,7 +313,7 @@ async fn main {
   } else {
     "https://github.com/\{repository}/actions/runs/\{run_id}"
   }
-  for package_dir in arguments[1:] {
+  for package_dir in requested {
     guard package_dir != "" &&
       package_dir != "." &&
       package_dir != ".." &&
@@ -205,6 +339,11 @@ async fn main {
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/url/own", "-p", "justjavac/benchmarks/url/tonyfettes",
           "-p", "justjavac/benchmarks/url/moonbitstack", "-p", "justjavac/benchmarks/url/connect0459",
+        ]
+      } else if package_dir == "base64" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/base64",
         ]
       } else {
         [
@@ -235,6 +374,9 @@ async fn main {
       }
       guard package_dir != "url" || records.length() == 144 else {
         fail("Expected 144 URL cases, received \{records.length()}")
+      }
+      if package_dir == "base64" {
+        annotate_base64(records)
       }
       let mut recorded_command = "moon " + command.join(" ")
       if package_dir == "crc32" {
@@ -303,7 +445,38 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "url" {
+      "comparison_dependencies": if package_dir == "base64" {
+        [
+          {
+            "label": "core",
+            "package": "moonbitlang/core/encoding/base64",
+            "version": "toolchain-bundled",
+            "license": "Apache-2.0",
+            "api": "encode(BytesView), decode(StringView)",
+          },
+          {
+            "label": "gmlewis",
+            "package": "gmlewis/base64",
+            "version": "0.16.15",
+            "license": "Apache-2.0",
+            "api": "std/url_encode2str(FixedArray), std/url_decode2bytes(String)",
+          },
+          {
+            "label": "kujirahand",
+            "package": "kujirahand/base64",
+            "version": "0.1.1",
+            "license": "Apache-2.0",
+            "api": "encode_bytes(Bytes), decode_bytes(String)",
+          },
+          {
+            "label": "moonbase",
+            "package": "moonbitstack/moonbase/base64",
+            "version": "0.5.1",
+            "license": "Apache-2.0",
+            "api": "encode(BytesView), decode(StringView)/decode_bytes(BytesView), strict=true",
+          },
+        ]
+      } else if package_dir == "url" {
         [
           {
             "label": "tonyfettes",

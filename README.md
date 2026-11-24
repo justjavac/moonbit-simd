@@ -18,6 +18,7 @@ library modules.
 | --- | --- | --- | --- |
 | `justjavac/crc32` | IEEE CRC-32, streaming, and checksum combination | [Guide](crc32/README.md) · [Examples](crc32/README.mbt.md) | [BENCHMARK.md](crc32/BENCHMARK.md) |
 | `justjavac/url` | WHATWG URL parsing, normalization, resolution, and form queries, ported from Ada | [Guide](url/README.md) · [Examples](url/README.mbt.md) | [BENCHMARK.md](url/BENCHMARK.md) |
+| `justjavac/base64` | RFC 4648 Base64 and WHATWG forgiving decoding, ported from base64-simd | [Guide](base64/README.md) · [Examples](base64/README.mbt.md) | [BENCHMARK.md](base64/BENCHMARK.md) |
 
 Follow each guide for installation, API usage, and release availability. New
 libraries are added as sibling modules at the repository root.
@@ -57,7 +58,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url
+moon run scripts/coverage_report.mbtx local crc32 url base64
 ```
 
 ## Benchmarks
@@ -71,12 +72,20 @@ against `gaato/crc`, `gmlewis/crc32`, `kujirahand/crc32`, and
 `moonbitstack/mooncrypt/sum/crc32`, with pinned dependencies isolated from the
 published library. Its separate URL adapter packages compare `tonyfettes/url`,
 `moonbitstack/moonurl` in WHATWG mode, and `connect0459/urllib` against
-`justjavac/url`. Reproduce locally from the repository root:
+`justjavac/url`.
+
+Base64 adapters compare core, `gmlewis/base64`,
+`moonbitstack/moonbase/base64`, and `kujirahand/base64` with
+`justjavac/base64`. Their cases distinguish string/byte decoding, output
+allocation, buffer reuse, partial views, and matching RFC 4648 policies.
+
+Reproduce locally from the repository root:
 
 ```text
 moon -C benchmarks test --target all
 moon run scripts/benchmark.mbtx crc32
 moon run scripts/benchmark.mbtx url
+moon run scripts/benchmark.mbtx base64
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as

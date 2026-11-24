@@ -91,7 +91,7 @@ jobs:
         run: moon test --target native --enable-coverage
 
       - name: Generate filtered native Cobertura reports
-        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url
+        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url base64
 
       - name: Save the coverage report
         uses: actions/upload-artifact@v4
@@ -100,13 +100,14 @@ jobs:
           path: |
             coverage-crc32-${{ matrix.flag }}.xml
             coverage-url-${{ matrix.flag }}.xml
+            coverage-base64-${{ matrix.flag }}.xml
           if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
-          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml
+          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml,coverage-base64-${{ matrix.flag }}.xml
           flags: ${{ matrix.flag }}
           name: workspace-${{ matrix.flag }}
           disable_search: true
