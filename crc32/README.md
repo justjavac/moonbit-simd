@@ -226,11 +226,13 @@ the JavaScript backend requires Node.js. CI runs all four backends on each OS.
 
 ## Performance
 
-The complete CI performance report is [BENCHMARK.md](BENCHMARK.md), with its
-original statistics and provenance in `BENCHMARK-DATA.json`. The report covers
-Linux, macOS, and Windows across all four supported backends, including input
-sizes, nonzero view offsets, streaming chunk sizes, and full-width combination
-lengths. It records CPU, compiler, sample counts, latency, throughput, and variation.
+The focused CI comparison is [BENCHMARK.md](BENCHMARK.md), with every case,
+original statistic, and environment in [BENCHMARK-DATA.json](BENCHMARK-DATA.json).
+It compares this module's scalar and SIMD paths with `gaato/crc`, `gmlewis/crc32`,
+`kujirahand/crc32`, and `moonbitstack/mooncrypt/sum/crc32` using pinned versions
+and identical IEEE CRC-32 inputs. Measurements cover Linux, macOS, and Windows
+across all four backends, including short inputs, large buffers, unaligned views,
+streaming chunk sizes, and this module's checksum-combination workloads.
 
 Scalar processing remains the default based on the initial local measurements.
 The vector path still performs scalar table lookups, so SIMD requests can be
@@ -242,12 +244,16 @@ Run the same suite locally:
 ```text
 moon bench --target native --release
 moon bench --target wasm --release
+moon -C benchmarks test --target all
 moon run scripts/benchmark.mbtx crc32
 ```
 
-The last command runs all four backends sequentially from the parent workspace
-and writes JSON and raw logs to `_build/benchmarks/crc32/`. Those measurements are
-marked local; the CI report generator requires a complete, consistent CI run.
+The first two commands measure this module alone. Run the comparison check and
+collector from the repository root. The collector measures all four backends
+sequentially and writes JSON and raw logs to `_build/benchmarks/crc32/`. Local
+measurements are labelled separately; the report generator requires a complete,
+consistent CI run. Third-party dependencies live in the development-only
+`benchmarks/` workspace and are not dependencies of this library.
 
 To request vectors for streaming input:
 

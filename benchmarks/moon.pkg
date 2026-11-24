@@ -1,0 +1,10 @@
+import {
+  "justjavac/crc32" @ours,
+  "gaato/crc" @gaato,
+  "gmlewis/crc32" @gmlewis,
+  "kujirahand/crc32" @kujirahand,
+  "moonbitstack/mooncrypt/sum/crc32" @mooncrypt,
+  "moonbitlang/core/bench",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

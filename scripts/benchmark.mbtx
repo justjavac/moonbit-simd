@@ -190,7 +190,16 @@ async fn main {
     let directory = "_build/benchmarks/\{package_dir}"
     @fs.mkdir("\{directory}/\{os}", recursive=true, allow_existing=true)
     let backends : Array[Json] = []
-    for backend in ["native", "wasm", "wasm-gc", "js"] {
+    let selected = environment("BENCHMARK_BACKENDS")
+    let targets = if selected == "" {
+      ["native", "wasm", "wasm-gc", "js"]
+    } else {
+      selected.split(",").map(value => value.to_owned()).to_array()
+    }
+    for backend in targets {
+      guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
+        fail("Unsupported benchmark backend")
+      }
       let command = [
         "bench",
         "--target",
@@ -216,9 +225,39 @@ async fn main {
       guard package_dir != "crc32" || records.length() == 69 else {
         fail("Expected 69 crc32 cases, received \{records.length()}")
       }
+      let mut recorded_command = "moon " + command.join(" ")
+      if package_dir == "crc32" {
+        let comparison_command = [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks",
+        ]
+        println("Comparing external CRC32 libraries on \{os}/\{backend}")
+        let comparison = @shell.Cmd("moon", comparison_command).output(
+          max_output_bytes=2097152,
+        )
+        @fs.write_text(
+          "\{directory}/\{os}/\{backend}-comparison.log",
+          comparison.stdout() + comparison.stderr(),
+        )
+        guard comparison.exit_code() == 0 else {
+          fail("Cross-library benchmark failed")
+        }
+        let comparison_records = summaries(comparison.stdout())
+        guard comparison_records.length() == 138 else {
+          fail(
+            "Expected 138 comparison cases, received \{comparison_records.length()}",
+          )
+        }
+        for value in comparison_records {
+          records.push(value)
+        }
+        recorded_command = recorded_command +
+          "\nmoon " +
+          comparison_command.join(" ")
+      }
       backends.push({
         "backend": backend,
-        "command": "moon " + command.join(" "),
+        "command": recorded_command,
         "started_at_utc": started,
         "finished_at_utc": timestamp(os),
         "time_unit": "microseconds",
@@ -245,6 +284,36 @@ async fn main {
       "cpu": cpu,
       "toolchain": toolchain,
       "node": node,
+      "comparison_dependencies": [
+        {
+          "label": "gaato",
+          "package": "gaato/crc",
+          "version": "0.1.1",
+          "license": "Apache-2.0",
+          "api": "crc32_update(0, data)",
+        },
+        {
+          "label": "gmlewis",
+          "package": "gmlewis/crc32",
+          "version": "0.9.3",
+          "license": "Apache-2.0",
+          "api": "Digest::new, write(Byte), digest",
+        },
+        {
+          "label": "kujirahand",
+          "package": "kujirahand/crc32",
+          "version": "0.1.1",
+          "license": "MIT",
+          "api": "checksum(Bytes), CRC32Stream",
+        },
+        {
+          "label": "mooncrypt",
+          "package": "moonbitstack/mooncrypt/sum/crc32",
+          "version": "0.5.2",
+          "license": "Apache-2.0",
+          "api": "crc32(data, kind=Ieee), Crc32",
+        },
+      ],
       "backends": Json(backends),
     }
     @fs.write_text("\{directory}/\{os}.json", result.stringify(indent=2))

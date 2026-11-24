@@ -47,8 +47,9 @@ crc32/
 - License every module under MIT: set `license = "MIT"` in `moon.mod` and
   include the complete MIT license in that module's `LICENSE`. Preserve any
   required attribution when incorporating third-party source.
-- Keep the root README detailed: explain the workspace, module catalog,
-  supported systems and backends, development commands, coverage, and licensing.
+- Keep the root README concise: introduce the collection, module catalog,
+  supported systems and backends, essential development commands, coverage,
+  and licensing. Link to module guides and this file for detailed instructions.
 - Keep each module's README detailed: describe the algorithm and its variant,
   installation and imports, public API, complete examples, mutation and state
   semantics, portability, performance limits, testing, and references.
@@ -108,10 +109,11 @@ crc32/
 - Benchmark meaningful short and large inputs before claiming a speedup.
   Report the backend and hardware; do not equate portable vector operations
   with hardware CRC or carry-less multiplication instructions.
-- Keep measured performance in each module's `BENCHMARK.md`, with its complete
-  `BENCHMARK-DATA.json` snapshot. Record the source commit, CI run and attempt,
-  OS, runner image, CPU, architecture, toolchain, commands, input sizes,
-  view offsets, sample counts, latency, throughput, and variability.
+- Keep each module's `BENCHMARK.md` concise and focused on key workloads,
+  comparisons, and measured tradeoffs; preserve exhaustive results in its
+  `BENCHMARK-DATA.json` snapshot. Across these files, record the source commit,
+  CI run and attempt, OS, runner image, CPU, architecture, toolchain, commands,
+  input sizes, view offsets, sample counts, latency, throughput, and variability.
 - Generate benchmark reports from one complete CI run. Preserve raw logs as
   artifacts and commit a selected snapshot deliberately; keep local measurements
   clearly separate from CI results.

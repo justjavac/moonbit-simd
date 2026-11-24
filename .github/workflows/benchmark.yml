@@ -9,6 +9,7 @@ on:
       - "**/*.mbt"
       - "**/moon.mod"
       - "**/moon.pkg"
+      - "benchmarks/moon.work"
       - "scripts/benchmark*.mbtx"
       - ".github/workflows/benchmark.yml"
       - ".github/actions/setup-moonbit/action.yml"
@@ -50,7 +51,7 @@ jobs:
         with:
           version: nightly
       - name: Verify correctness before measuring
-        run: moon test --target all
+        run: moon -C benchmarks test --target all
       - name: Measure crc32 on all backends sequentially
         run: moon run scripts/benchmark.mbtx crc32
       - name: Preserve complete measurements and raw logs

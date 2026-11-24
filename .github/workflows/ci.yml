@@ -32,7 +32,7 @@ jobs:
           - os: windows-latest
             flag: windows
     env:
-      # The SIMD API is experimental; the validated compiler is recorded in README.md.
+      # The SIMD API is experimental; toolchain versions are recorded in the logs.
       MOONBIT_INSTALL_VERSION: nightly
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +65,15 @@ jobs:
 
       - name: Check benchmark automation formatting
         run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx
+
+      - name: Check comparison module
+        run: moon -C benchmarks check --target all --deny-warn
+
+      - name: Check comparison module formatting
+        run: moon -C benchmarks fmt --check
+
+      - name: Verify comparison adapters
+        run: moon -C benchmarks test --target all
 
       - name: Test benchmark report validation
         run: moon run scripts/benchmark_report.mbtx --self-test

@@ -97,8 +97,8 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
   }
   let summaries = array(value, "summaries")
   guard !summaries.is_empty() &&
-    (package_dir != "crc32" || summaries.length() == 69) else {
-    fail("Incomplete benchmark inventory")
+    (package_dir != "crc32" || summaries.length() == 207) else {
+    fail("Expected 69 library and 138 comparison cases")
   }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
@@ -162,6 +162,10 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
     guard text(record, "run_url") == expected_url else {
       fail("Unexpected CI run URL")
     }
+    guard array(record, "comparison_dependencies") ==
+      array(first, "comparison_dependencies") else {
+      fail("Mixed comparison dependency versions")
+    }
     let backends = array(record, "backends")
     guard backends.length() == 4 else { fail("Missing backend results") }
     let backend_names : Map[String, Unit] = Map([])
@@ -178,97 +182,193 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
 }
 
 ///|
-/// Produces a concise paired comparison for large one-shot input on one runner.
-fn comparisons(builder : StringBuilder, backend : Json) -> Unit raise {
-  let records : Map[String, Json] = Map([])
-  for summary in array(backend, "summaries") {
-    records[text(summary, "name")] = summary
+/// Displays string and numeric runner metadata without JSON quotation marks.
+fn display(value : Json) -> String {
+  match value {
+    String(contents) => cell(contents)
+    Number(contents, ..) => decimal(contents)
+    _ => cell(value.stringify())
   }
-  builder.write_string(
-    "| Bytes | Scalar mean (ns) | SIMD request mean (ns) | Ratio (scalar/request) |\n| --- | --- | --- | --- |\n",
-  )
-  for size in ["64", "1024", "4096", "65536", "1048576"] {
-    let scalar = records.get("hash:scalar:\{size}:0")
-    let requested = records.get("hash:simd-request:\{size}:0")
-    if scalar is Some(s) && requested is Some(v) {
-      let scalar_mean = number(s, "mean")
-      let requested_mean = number(v, "mean")
-      let ratio = decimal(scalar_mean / requested_mean)
-      builder.write_string(
-        "| \{size} | \{decimal(scalar_mean * 1000)} | \{decimal(requested_mean * 1000)} | \{ratio}x |\n",
-      )
-    }
-  }
-  builder.write_string(
-    "\nA ratio above 1 means the SIMD request was faster for that case. On `wasm-gc` and `js`, the SIMD request uses the scalar fallback.\n\n",
-  )
 }
 
 ///|
-/// Renders every case with latency, variability, throughput, and sampling metadata.
-fn detailed_results(builder : StringBuilder, backend : Json) -> Unit raise {
-  builder.write_string(
-    "| Workload | Mode | Bytes / suffix length | Offset / chunk bytes | Mean +/- SD (ns) | Median (ns) | Min..max (ns) | CV (%) | GiB/s | Samples x batch |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
-  )
+/// Indexes named cases for focused public API comparison tables.
+fn index(backend : Json) -> Map[String, Json] raise {
+  let values : Map[String, Json] = Map([])
   for summary in array(backend, "summaries") {
-    let parts = case_parts(summary)
-    let workload = parts[0]
-    let mean = number(summary, "mean")
-    let stddev = number(summary, "std_dev")
-    let median = number(summary, "median")
-    let minimum = number(summary, "min")
-    let maximum = number(summary, "max")
-    let variation = number(summary, "std_dev_pct")
-    let variability = if variation >= 5 { " (variable)" } else { "" }
-    let speed = throughput(workload, parts[2], mean)
-    let samples = decimal(number(summary, "runs"))
-    let batch = decimal(number(summary, "batch_size"))
-    builder.write_string(
-      "| \{cell(workload)} | \{cell(parts[1])} | \{cell(parts[2])} | \{cell(parts[3])} | \{decimal(mean * 1000)} +/- \{decimal(stddev * 1000)} | \{decimal(median * 1000)} | \{decimal(minimum * 1000)}..\{decimal(maximum * 1000)} | \{decimal(variation)}\{variability} | \{speed} | \{samples} x \{batch} |\n",
-    )
+    values[text(summary, "name")] = summary
+  }
+  values
+}
+
+///|
+/// Formats a measured mean and marks cases with substantial sample variation.
+fn metric(summary : Json, units : String, bytes : Double) -> String raise {
+  let mean = number(summary, "mean")
+  let value = match units {
+    "ns" => mean * 1000
+    "us" => mean
+    "GiB/s" => bytes * 1000000 / mean / 1073741824
+    _ => fail("Unknown report unit")
+  }
+  let variability = if number(summary, "std_dev_pct") >= 5 { "*" } else { "" }
+  decimal(value) + variability
+}
+
+///|
+/// Renders one key comparison for all twelve runner/backend environments.
+fn results_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  bytes : String,
+  parameter : String,
+  units : String,
+  byte_count : Double,
+) -> Unit raise {
+  builder.write_string("## \{title}\n\n")
+  builder.write_string(
+    "| OS / backend | ours scalar | ours SIMD request | gaato | gmlewis | kujirahand | mooncrypt |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    for backend in array(record, "backends") {
+      let values = index(backend)
+      let implementations = [
+        "own-scalar", "own-simd", "gaato", "gmlewis", "kujirahand", "mooncrypt",
+      ]
+      let mut fastest = number(
+        values["\{workload}:own-scalar:\{bytes}:\{parameter}"],
+        "mean",
+      )
+      for implementation in implementations {
+        let name = "\{workload}:\{implementation}:\{bytes}:\{parameter}"
+        let value = values
+          .get(name)
+          .unwrap_or_else(() => fail("Missing comparison: \{name}"))
+        fastest = fastest.min(number(value, "mean"))
+      }
+      builder.write_string(
+        "| \{text(record, "os")} / \{text(backend, "backend")} ",
+      )
+      for implementation in implementations {
+        let name = "\{workload}:\{implementation}:\{bytes}:\{parameter}"
+        let value = values
+          .get(name)
+          .unwrap_or_else(() => fail("Missing comparison: \{name}"))
+        let measured = metric(value, units, byte_count)
+        let formatted = if number(value, "mean") == fastest {
+          "**\{measured}**"
+        } else {
+          measured
+        }
+        builder.write_string("| \{formatted} ")
+      }
+      builder.write_string("|\n")
+    }
   }
   builder.write_string("\n")
 }
 
 ///|
-/// Builds the complete module Markdown report from a validated CI snapshot.
+/// Summarizes native throughput ratios against the fastest external library and the scalar path.
+fn highlights(builder : StringBuilder, records : Array[Json]) -> Unit raise {
+  builder.write_string(
+    "## At a glance\n\nNative, 1 MiB owned input; ratios compare throughput:\n\n",
+  )
+  for record in records {
+    let backends = array(record, "backends")
+    let native_index = backends
+      .search_by(backend => text(backend, "backend") == "native")
+      .unwrap_or_else(() => fail("Missing native results"))
+    let values = index(backends[native_index])
+    let scalar = number(values["compare:own-scalar:1048576:0"], "mean")
+    let simd = number(values["compare:own-simd:1048576:0"], "mean")
+    let mut fastest = "gaato"
+    let mut external_mean = number(values["compare:gaato:1048576:0"], "mean")
+    for implementation in ["gmlewis", "kujirahand", "mooncrypt"] {
+      let mean = number(values["compare:\{implementation}:1048576:0"], "mean")
+      if mean < external_mean {
+        fastest = implementation
+        external_mean = mean
+      }
+    }
+    builder.write_string(
+      "- **\{text(record, "os")}:** scalar \{decimal(1048576 * 1000000 / scalar / 1073741824)} GiB/s, **\{decimal(external_mean / scalar)}x** the fastest external library (\{fastest}); SIMD **\{decimal(scalar / simd)}x** scalar.\n",
+    )
+  }
+  builder.write_string(
+    "\nRatios below 1 mean lower throughput. Hosted measurements are workload-specific; consult variation marks in the tables.\n\n",
+  )
+}
+
+///|
+/// Builds a concise, information-rich report backed by a complete JSON snapshot.
 fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
   let first = records[0]
   let revision = text(first, "source_commit")
   let repository = text(first, "repository")
-  let run = text(first, "run_id")
-  let run_url = text(first, "run_url")
   let builder = StringBuilder()
-  builder.write_string("# justjavac/\{package_dir} Benchmark Report\n\n")
+  builder.write_string("# CRC32 performance comparison\n\n")
   builder.write_string(
-    "- Source commit: [\{revision}](https://github.com/\{repository}/commit/\{revision})\n- CI run: [\{run}](\{run_url}) (attempt \{text(first, "run_attempt")})\n- Coverage: Linux, macOS, and Windows; native, Wasm, Wasm GC, and JavaScript.\n- Complete machine-readable snapshot: [BENCHMARK-DATA.json](BENCHMARK-DATA.json).\n\n",
+    "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{repository}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
   )
   builder.write_string(
-    "## Method\n\nAll backends run sequentially within each OS job. Both implementation choices are measured in the same release benchmark binary using identical input views. The input is deterministic binary data generated outside the timed callbacks.\n\nThe suite contains 69 cases per backend: 52 one-shot cases over 13 lengths and offsets 0/1; 10 incremental cases over five chunk sizes; and seven combination cases including UInt64-sized virtual zero suffixes. Streaming timings include hasher creation and updates. Combination timings read no payload bytes, so their throughput is not reported.\n\nMoonBit calibrates with approximately 100 ms of warm-up and takes 10 batch samples. The measured batch targets approximately 100 ms for operations taking at least one microsecond; faster cases use 100000 iterations per batch. Statistics are calculated after 5% winsorization. Reported times include the `bench.keep` optimizer barrier. Values below are rounded to 0.001 ns; the JSON preserves all original statistics, including quartiles, variance, median absolute deviation, and IQR. CV at or above 5% is marked variable and is not a regression verdict.\n\nThe SIMD request uses vector slicing on native/Wasm and scalar fallbacks on Wasm GC/JavaScript; inputs shorter than 16 bytes also use scalar tails. Hosted runner hardware and load can change between CI runs. Compare implementations within a runner/backend; these measurements do not establish universal cross-platform speed rankings.\n\n",
+    "**Scope:** 3 operating systems x 4 backends x 207 cases = **2484 measurements**. Key comparisons are below; [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves every case, mean, median, range, standard deviation, quartile, sample count, command, timestamp, and environment.\n\n",
   )
-  for record in records {
-    let os = text(record, "os")
-    let cpu = field(record, "cpu")
-    builder.write_string("## \{os}\n\n")
+  highlights(builder, records)
+  builder.write_string(
+    "## Implementations\n\n| Label | Package / pinned version | Public API measured |\n| --- | --- | --- |\n| ours scalar | justjavac/crc32 / source above | hash and Hasher, simd=false |\n| ours SIMD request | justjavac/crc32 / source above | hash and Hasher, simd=true |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
     builder.write_string(
-      "| Metadata | Value |\n| --- | --- |\n| Runner | \{cell(text(record, "runner_label"))} |\n| Image | \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} |\n| CPU | \{cell(text(cpu, "model"))} |\n| Architecture | \{cell(text(cpu, "architecture"))} |\n| Logical CPUs | \{cell(field(cpu, "logical_cpus").stringify())} |\n| Node.js | \{cell(text(record, "node"))} |\n\n",
+      "| \{cell(text(dependency, "label"))} | \{cell(text(dependency, "package"))} / \{cell(text(dependency, "version"))} | \{cell(text(dependency, "api"))} |\n",
     )
-    builder.write_string(
-      "Toolchain:\n\n```text\n\{text(record, "toolchain")}\n```\n\n",
-    )
-    for backend in array(record, "backends") {
-      let name = text(backend, "backend")
-      builder.write_string("### \{name}\n\n")
-      builder.write_string(
-        "Measured from \{text(backend, "started_at_utc")} to \{text(backend, "finished_at_utc")} (UTC).\n\n```text\n\{text(backend, "command")}\n```\n\n",
-      )
-      comparisons(builder, backend)
-      detailed_results(builder, backend)
-    }
   }
   builder.write_string(
-    "## Reproduction and data retention\n\nRun `moon run scripts/benchmark.mbtx \{package_dir}` from the workspace for a local measurement, or dispatch the Benchmarks workflow for a CI snapshot. Generate a report from merged CI artifacts with `moon run scripts/benchmark_report.mbtx _build/benchmarks _build/benchmark-report`. Local measurements are explicitly marked local and cannot be published by this report generator as CI results.\n\nThe CI run retains raw logs and per-OS JSON artifacts for 90 days. The checked-in BENCHMARK-DATA.json preserves the complete statistics and provenance for this report after artifacts expire. This snapshot is committed deliberately; CI does not automatically push changing measurements to the source branch.\n",
+    "\n## Reading the results\n\n- All libraries pass identical IEEE CRC-32 vectors and an independent bitwise oracle.\n- Owned inputs and stream chunks are prepared before timing; state creation, public API calls, byte-wise adapter loops, and finalization are timed. gmlewis uses a byte-at-a-time API.\n- The offset-1 view workload includes input materialization for kujirahand, whose API requires owned Bytes. Other adapters accept views or iterate their bytes.\n- The SIMD request uses scalar fallback on Wasm GC/JS and inputs shorter than 16 bytes.\n- **Bold** marks the best measured mean in a row; `*` marks CV >= 5% and possible noise. Lower latency and higher GiB/s are better. Compare within an OS/backend; hosted hardware differs.\n- Release mode, deterministic binary inputs, 10 batch samples, and 5% winsorization. Calibration targets about 100 ms; fast cases use 100000 iterations per batch. Timings include the bench.keep barrier.\n\n",
+  )
+  builder.write_string(
+    "## Runner context\n\n| OS | CPU | Architecture / logical CPUs | Image | Node.js |\n| --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(cpu, "model"))} | \{cell(text(cpu, "architecture"))} / \{display(field(cpu, "logical_cpus"))} | \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} | \{cell(text(record, "node"))} |\n",
+    )
+  }
+  builder.write_string("\n")
+  results_table(
+    builder, records, "1 MiB owned input: throughput (GiB/s)", "compare", "1048576",
+    "0", "GiB/s", 1048576,
+  )
+  results_table(
+    builder, records, "4 KiB owned input: latency (us)", "compare", "4096", "0",
+    "us", 4096,
+  )
+  results_table(
+    builder, records, "64-byte owned input: latency (ns)", "compare", "64", "0",
+    "ns", 64,
+  )
+  results_table(
+    builder, records, "64 KiB stream, 4 KiB chunks: latency (us)", "compare-stream",
+    "65536", "4096", "us", 65536,
+  )
+  results_table(
+    builder, records, "1 MiB offset-1 view: end-to-end latency (us)", "view", "1048576",
+    "1", "us", 1048576,
+  )
+  builder.write_string(
+    "<details>\n<summary>Toolchain and reproduction</summary>\n\n",
+  )
+  for record in records {
+    builder.write_string(
+      "**\{text(record, "os")}:**\n\n~~~text\n\{text(record, "toolchain")}\n~~~\n\n",
+    )
+  }
+  builder.write_string(
+    "Run `moon -C benchmarks test --target all` before local measurements, then `moon run scripts/benchmark.mbtx crc32`. CI measures backends sequentially per OS. Raw artifacts are retained for 90 days; committed JSON preserves the full snapshot. Reports retain their measured source commit.\n\n</details>\n",
   )
   builder.to_string()
 }
@@ -284,6 +384,12 @@ fn self_test() -> Unit raise {
   assert_eq(throughput("combine", "18446744073709551615", 1.0), "n/a")
   assert_eq(throughput("hash", "0", 1.0), "n/a")
   assert_eq(cell("a|b\nc"), "a\\|b c")
+  assert_eq(metric({ "mean": 1.25, "std_dev_pct": 4.9 }, "ns", 64), "1250")
+  assert_eq(metric({ "mean": 1.25, "std_dev_pct": 5 }, "us", 64), "1.25*")
+  assert_eq(
+    metric({ "mean": 976.5625, "std_dev_pct": 0 }, "GiB/s", 1048576),
+    "1",
+  )
   try validate_snapshot([], "crc32") catch {
     _ => ()
   } noraise {
