@@ -1,0 +1,31 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/benchmarks/url/corpus"
+
+import {
+  "moonbitlang/core/bench",
+}
+
+// Values
+pub fn[A] absolute_bench(@bench.Bench, String, (StringView) -> A, (A) -> String) -> Unit
+
+pub fn absolute_cases() -> Array[(String, String, String)]
+
+pub fn base_url() -> String
+
+pub fn form_bench(@bench.Bench, String, (String) -> String) -> Unit
+
+pub fn form_input() -> String
+
+pub fn[A] relative_bench(@bench.Bench, String, (StringView) -> A, (A) -> String) -> Unit
+
+pub fn relative_cases() -> Array[(String, String, String)]
+
+pub fn[A] verify((StringView) -> A, (A) -> String, (StringView) -> A, (String) -> String) -> Unit raise
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

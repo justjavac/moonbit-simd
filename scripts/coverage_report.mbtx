@@ -1,0 +1,48 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/env",
+}
+----
+
+///|
+/// Exports only native trace metadata after the workspace's instrumented native tests.
+async fn main {
+  let args = @env.args()
+  guard args.length() >= 3 &&
+    ["linux", "macos", "windows", "local"].contains(args[1]) else {
+    fail("Usage: moon run scripts/coverage_report.mbtx <OS flag> <module>...")
+  }
+  let flag = args[1]
+  for module_dir in args[2:] {
+    guard module_dir != "" &&
+      module_dir != "." &&
+      module_dir != ".." &&
+      module_dir.find("/") is None &&
+      module_dir.find("\\") is None else {
+      fail("Expected a direct workspace module directory")
+    }
+    let prefix = "_build/native/debug/test/justjavac/\{module_dir}/\{module_dir}"
+    let report = "coverage-\{module_dir}-\{flag}.xml"
+    let output = @shell.Cmd("moon", [
+      "coverage",
+      "report",
+      "--",
+      "--no-ignore-missing-files",
+      "-p",
+      "justjavac/\{module_dir}",
+      "-f",
+      "cobertura",
+      "-o",
+      report,
+      "\{prefix}.trace.source",
+      "\{prefix}.whitebox_test.trace.source",
+      "\{prefix}.internal_test.trace.source",
+    ]).output(max_output_bytes=2097152)
+    guard output.exit_code() == 0 else {
+      fail(output.stdout() + output.stderr())
+    }
+    println("Generated \{report} from native coverage")
+  }
+}

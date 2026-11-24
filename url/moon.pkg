@@ -1,0 +1,16 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/simd",
+  "moonbit-community/unicode-idna" @idna,
+}
+
+import {
+  "moonbitlang/core/json",
+} for "test"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+warnings = "-alert_experimental-unused_package"

@@ -1,0 +1,5 @@
+import {
+  "connect0459/urllib/url" @urllib,
+  "justjavac/benchmarks/url/corpus" @cases,
+  "moonbitlang/core/bench",
+} for "wbtest"

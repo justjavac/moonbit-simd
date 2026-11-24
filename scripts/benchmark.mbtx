@@ -200,15 +200,23 @@ async fn main {
       guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
         fail("Unsupported benchmark backend")
       }
-      let command = [
-        "bench",
-        "--target",
-        backend,
-        "--release",
-        "--no-parallelize",
-        "-p",
-        "justjavac/\{package_dir}",
-      ]
+      let command = if package_dir == "url" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/url/own", "-p", "justjavac/benchmarks/url/tonyfettes",
+          "-p", "justjavac/benchmarks/url/moonbitstack", "-p", "justjavac/benchmarks/url/connect0459",
+        ]
+      } else {
+        [
+          "bench",
+          "--target",
+          backend,
+          "--release",
+          "--no-parallelize",
+          "-p",
+          "justjavac/\{package_dir}",
+        ]
+      }
       println("Benchmarking \{package_dir} on \{os}/\{backend}")
       let started = timestamp(os)
       let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
@@ -224,6 +232,9 @@ async fn main {
       let records = summaries(output.stdout())
       guard package_dir != "crc32" || records.length() == 69 else {
         fail("Expected 69 crc32 cases, received \{records.length()}")
+      }
+      guard package_dir != "url" || records.length() == 144 else {
+        fail("Expected 144 URL cases, received \{records.length()}")
       }
       let mut recorded_command = "moon " + command.join(" ")
       if package_dir == "crc32" {
@@ -284,36 +295,70 @@ async fn main {
       "cpu": cpu,
       "toolchain": toolchain,
       "node": node,
-      "comparison_dependencies": [
-        {
-          "label": "gaato",
-          "package": "gaato/crc",
-          "version": "0.1.1",
-          "license": "Apache-2.0",
-          "api": "crc32_update(0, data)",
-        },
-        {
-          "label": "gmlewis",
-          "package": "gmlewis/crc32",
-          "version": "0.9.3",
-          "license": "Apache-2.0",
-          "api": "Digest::new, write(Byte), digest",
-        },
-        {
-          "label": "kujirahand",
-          "package": "kujirahand/crc32",
-          "version": "0.1.1",
-          "license": "MIT",
-          "api": "checksum(Bytes), CRC32Stream",
-        },
-        {
-          "label": "mooncrypt",
-          "package": "moonbitstack/mooncrypt/sum/crc32",
-          "version": "0.5.2",
-          "license": "Apache-2.0",
-          "api": "crc32(data, kind=Ieee), Crc32",
-        },
-      ],
+      "module_manifest": @fs.read_text("\{package_dir}/moon.mod"),
+      "comparison_manifest": @fs.read_text("benchmarks/moon.mod"),
+      "dependency_tree": capture("moon", ["-C", "benchmarks", "tree"]),
+      "working_tree_dirty": if run_id == "" {
+        capture("git", ["status", "--porcelain"]) != ""
+      } else {
+        false
+      },
+      "comparison_dependencies": if package_dir == "url" {
+        [
+          {
+            "label": "tonyfettes",
+            "package": "tonyfettes/url",
+            "version": "0.3.5",
+            "license": "Apache-2.0",
+            "api": "Url::parse(StringView), href",
+          },
+          {
+            "label": "moonbitstack",
+            "package": "moonbitstack/moonurl",
+            "version": "0.3.1",
+            "license": "Apache-2.0",
+            "api": "Url::decode(syntax=Whatwg), encode",
+          },
+          {
+            "label": "connect0459",
+            "package": "connect0459/urllib/url",
+            "version": "0.6.0",
+            "license": "Apache-2.0",
+            "api": "parse(String), parse_with_base, href",
+          },
+        ]
+      } else {
+        [
+          {
+            "label": "gaato",
+            "package": "gaato/crc",
+            "version": "0.1.1",
+            "license": "Apache-2.0",
+            "api": "crc32_update(0, data)",
+          },
+          {
+            "label": "gmlewis",
+            "package": "gmlewis/crc32",
+            "version": "0.9.3",
+            "license": "Apache-2.0",
+            "api": "Digest::new, write(Byte), digest",
+          },
+          {
+            "label": "kujirahand",
+            "package": "kujirahand/crc32",
+            "version": "0.1.1",
+            "license": "MIT",
+            "api": "checksum(Bytes), CRC32Stream",
+          },
+          {
+            "label": "mooncrypt",
+            "package": "moonbitstack/mooncrypt/sum/crc32",
+            "version": "0.5.2",
+            "license": "Apache-2.0",
+            "api": "crc32(data, kind=Ieee), Crc32",
+          },
+        ]
+      },
       "backends": Json(backends),
     }
     @fs.write_text("\{directory}/\{os}.json", result.stringify(indent=2))

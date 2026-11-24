@@ -1,3 +1,4 @@
 members = [
   "./crc32",
+  "./url",
 ]

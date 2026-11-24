@@ -67,7 +67,7 @@ jobs:
         run: moon fmt
 
       - name: Check benchmark automation formatting
-        run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx
+        run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx scripts/coverage_report.mbtx scripts/url_fixtures.mbtx scripts/url_oracle.mbtx
 
       - name: Check comparison module
         run: moon -C benchmarks check --target all --deny-warn
@@ -84,25 +84,30 @@ jobs:
       - name: Verify generated and formatted files
         run: git diff --exit-code
 
-      - name: Test all backends with coverage
-        run: moon test --target all --enable-coverage
+      - name: Test all supported backends
+        run: moon test --target all
 
-      - name: Generate the crc32 Cobertura report
-        run: moon coverage analyze -p justjavac/crc32 -- -f cobertura -o coverage-crc32-${{ matrix.flag }}.xml
+      - name: Test native with coverage
+        run: moon test --target native --enable-coverage
+
+      - name: Generate filtered native Cobertura reports
+        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url
 
       - name: Save the coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.flag }}
-          path: coverage-crc32-${{ matrix.flag }}.xml
+          path: |
+            coverage-crc32-${{ matrix.flag }}.xml
+            coverage-url-${{ matrix.flag }}.xml
           if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
-          files: coverage-crc32-${{ matrix.flag }}.xml
+          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml
           flags: ${{ matrix.flag }}
-          name: crc32-${{ matrix.flag }}
+          name: workspace-${{ matrix.flag }}
           disable_search: true
           fail_ci_if_error: true

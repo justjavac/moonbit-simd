@@ -58,9 +58,9 @@ fn decimal(value : Double) -> String {
 /// Quotes untrusted runner metadata safely inside a Markdown table cell.
 fn cell(value : String) -> String {
   value
-  .replace(old="|", new="\\|")
-  .replace(old="\r", new=" ")
-  .replace(old="\n", new=" ")
+  .replace_all(old="|", new="\\|")
+  .replace_all(old="\r", new=" ")
+  .replace_all(old="\n", new=" ")
 }
 
 ///|
@@ -100,6 +100,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
     (package_dir != "crc32" || summaries.length() == 207) else {
     fail("Expected 69 library and 138 comparison cases")
   }
+  if package_dir == "url" {
+    validate_url_inventory(summaries)
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
@@ -129,6 +132,68 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
 }
 
 ///|
+/// Defines every URL workload, library mode, and view offset expected in a complete run.
+fn expected_url_keys() -> Map[String, Unit] {
+  let keys : Map[String, Unit] = Map([])
+  let implementations = [
+    "justjavac-scalar", "justjavac-simd", "tonyfettes", "moonbitstack", "connect0459",
+  ]
+  for
+    label in [
+      "short", "ascii", "long", "normalize", "unicode", "ipv4", "ipv6", "file", "credentials",
+    ] {
+    let offsets = if label == "short" || label == "long" {
+      ["0", "1"]
+    } else {
+      ["0"]
+    }
+    for workload in ["parse-" + label, "roundtrip-" + label] {
+      for implementation in implementations {
+        for offset in offsets {
+          keys["\{workload}:\{implementation}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for label in ["path", "query", "authority"] {
+    for workload in ["resolve-" + label, "resolve-roundtrip-" + label] {
+      for implementation in implementations {
+        keys["\{workload}:\{implementation}:0"] = ()
+      }
+    }
+  }
+  for
+    implementation in ["justjavac", "tonyfettes", "moonbitstack", "connect0459"] {
+    keys["form-roundtrip:\{implementation}:0"] = ()
+  }
+  keys
+}
+
+///|
+/// Rejects missing or substituted URL cases even when the total count is correct.
+fn validate_url_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_url_keys()
+  guard summaries.length() == expected.length() else {
+    fail("Expected 144 URL benchmark cases")
+  }
+  let lengths : Map[String, String] = Map([])
+  for summary in summaries {
+    let parts = case_parts(summary)
+    let key = "\{parts[0]}:\{parts[1]}:\{parts[3]}"
+    guard expected.contains(key) && @string.parse_int(parts[2]) > 0 else {
+      fail("Unexpected URL benchmark: \{key}")
+    }
+    let _ = expected.remove(key)
+    if lengths.get(parts[0]) is Some(length) {
+      guard length == parts[2] else { fail("Mismatched URL input lengths") }
+    } else {
+      lengths[parts[0]] = parts[2]
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete URL benchmark inventory") }
+}
+
+///|
 /// Rejects local measurements and mixed CI revisions or attempts in a published snapshot.
 fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise {
   guard records.length() == 3 else {
@@ -141,6 +206,7 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
     fail("Missing CI provenance")
   }
   let operating_systems : Map[String, Unit] = Map([])
+  let canonical_cases : Map[String, Unit] = Map([])
   for record in records {
     let os = text(record, "os")
     guard ["linux", "macos", "windows"].contains(os) &&
@@ -174,6 +240,20 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
       guard !backend_names.contains(name) else { fail("Duplicate backend") }
       backend_names[name] = ()
       validate_backend(backend, package_dir)
+      if package_dir == "url" {
+        let summaries = array(backend, "summaries")
+        if canonical_cases.is_empty() {
+          for summary in summaries {
+            canonical_cases[text(summary, "name")] = ()
+          }
+        } else {
+          for summary in summaries {
+            guard canonical_cases.contains(text(summary, "name")) else {
+              fail("Mixed URL case inventories")
+            }
+          }
+        }
+      }
     }
     guard text(field(record, "cpu"), "model") != "" else {
       fail("Missing CPU model")
@@ -226,19 +306,26 @@ fn results_table(
   parameter : String,
   units : String,
   byte_count : Double,
+  implementations~ : Array[String] = [
+    "own-scalar", "own-simd", "gaato", "gmlewis", "kujirahand", "mooncrypt",
+  ],
+  labels~ : Array[String] = [
+    "ours scalar", "ours SIMD request", "gaato", "gmlewis", "kujirahand", "mooncrypt",
+  ],
 ) -> Unit raise {
   builder.write_string("## \{title}\n\n")
   builder.write_string(
-    "| OS / backend | ours scalar | ours SIMD request | gaato | gmlewis | kujirahand | mooncrypt |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+    "| OS / backend | " +
+    labels.join(" | ") +
+    " |\n| --- | " +
+    labels.map(_ => "---").join(" | ") +
+    " |\n",
   )
   for record in records {
     for backend in array(record, "backends") {
       let values = index(backend)
-      let implementations = [
-        "own-scalar", "own-simd", "gaato", "gmlewis", "kujirahand", "mooncrypt",
-      ]
       let mut fastest = number(
-        values["\{workload}:own-scalar:\{bytes}:\{parameter}"],
+        values["\{workload}:\{implementations[0]}:\{bytes}:\{parameter}"],
         "mean",
       )
       for implementation in implementations {
@@ -306,6 +393,9 @@ fn highlights(builder : StringBuilder, records : Array[Json]) -> Unit raise {
 /// Builds a concise, information-rich report backed by a complete JSON snapshot.
 fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
+  if package_dir == "url" {
+    return url_report(records)
+  }
   let first = records[0]
   let revision = text(first, "source_commit")
   let repository = text(first, "repository")
@@ -374,6 +464,142 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
 }
 
 ///|
+/// Finds a workload's validated input byte count for a focused URL comparison table.
+fn url_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  offset : String,
+  units : String,
+) -> Unit raise {
+  let first = array(array(records[0], "backends")[0], "summaries")
+  let mut bytes = ""
+  for summary in first {
+    let parts = case_parts(summary)
+    if parts[0] == workload && parts[3] == offset {
+      bytes = parts[2]
+      break
+    }
+  }
+  guard bytes != "" else { fail("Missing URL workload: \{workload}") }
+  let form = workload == "form-roundtrip"
+  results_table(
+    builder,
+    records,
+    title + " (\{bytes} UTF-8 bytes)",
+    workload,
+    bytes,
+    offset,
+    units,
+    @string.parse_int(bytes).to_double(),
+    implementations=if form {
+      ["justjavac", "tonyfettes", "moonbitstack", "connect0459"]
+    } else {
+      [
+        "justjavac-scalar", "justjavac-simd", "tonyfettes", "moonbitstack", "connect0459",
+      ]
+    },
+    labels=if form {
+      ["justjavac", "tonyfettes", "moonbitstack", "connect0459"]
+    } else {
+      [
+        "ours scalar", "ours SIMD request", "tonyfettes", "moonbitstack", "connect0459",
+      ]
+    },
+  )
+}
+
+///|
+/// Renders a concise URL report with full provenance and an exhaustive JSON companion.
+fn url_report(records : Array[Json]) -> String raise {
+  let first = records[0]
+  let revision = text(first, "source_commit")
+  let repository = text(first, "repository")
+  let builder = StringBuilder()
+  builder.write_string("# URL performance comparison\n\n")
+  builder.write_string(
+    "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{repository}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
+  )
+  builder.write_string(
+    "**Scope:** 3 operating systems x 4 backends x 144 cases = **1728 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves all workloads, input lengths, UTF-16 view offsets, means, medians, ranges, variability, throughput inputs, sample counts, compiler versions, commands, timestamps, and dependency manifests.\n\n",
+  )
+  builder.write_string(
+    "## Implementations\n\n| Label | Package / pinned version | API |\n| --- | --- | --- |\n| ours scalar / SIMD request | justjavac/url / source above | parse(StringView, simd=false/true), href |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| \{cell(text(dependency, "label"))} | \{cell(text(dependency, "package"))} / \{cell(text(dependency, "version"))} | \{cell(text(dependency, "api"))} |\n",
+    )
+  }
+  builder.write_string(
+    "\n## Method\n\n- All adapters pass identical canonical results before timing; moonurl explicitly uses WHATWG mode. Each library runs in a separate binary on the same runner, sequentially per backend.\n- Nine absolute inputs cover short/long ASCII, normalization, Unicode/IDNA, IPv4, IPv6, file URLs, and credentials. Separate cases measure parse only and parse plus canonical serialization. Short/long inputs additionally use UTF-16 view offset 1. Three relative inputs use pre-parsed bases. Form-query cases include decoding and serialization.\n- Data construction is outside timing. Required public API adapters are timed, including StringView-to-String for urllib and UTF-8 conversion for moonurl's form decoder. Generic adapter callbacks and bench.keep optimizer barriers are included for every library. Getter allocation and eager/lazy serialization choices therefore affect roundtrip measurements.\n- The SIMD request uses checked V128 scans on native/Wasm and scalar fallback on Wasm GC/JS. Its canonical UTF-16 guard stays scalar below 64 code units; general UTF-8 scans use 16-byte blocks. This port does not use Ada's architecture-specific AVX-512 IP kernels or optional simdutf dependency.\n- Release mode, 10 batch samples, and 5% winsorization. Calibration targets about 100 ms; fast cases use 100000 iterations per batch. **Bold** marks the smallest measured mean in a row; `*` marks CV >= 5%. Compare within a runner/backend; these are workload-specific hosted measurements.\n\n",
+  )
+  builder.write_string(
+    "## Runner context\n\n| OS | CPU | Architecture / logical CPUs | Runner / image | Node.js |\n| --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(cpu, "model"))} | \{cell(text(cpu, "architecture"))} / \{display(field(cpu, "logical_cpus"))} | \{cell(text(record, "runner_label"))} / \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} | \{cell(text(record, "node"))} |\n",
+    )
+  }
+  builder.write_string("\n")
+  url_table(
+    builder, records, "Short absolute URL: parse latency (ns)", "parse-short", "0",
+    "ns",
+  )
+  url_table(
+    builder, records, "ASCII path/query/fragment: parse latency (ns)", "parse-ascii",
+    "0", "ns",
+  )
+  url_table(
+    builder, records, "Long ASCII URL: parse latency (us)", "parse-long", "0", "us",
+  )
+  url_table(
+    builder, records, "Long ASCII URL: UTF-8-equivalent throughput (GiB/s)", "parse-long",
+    "0", "GiB/s",
+  )
+  url_table(
+    builder, records, "Unicode URL with IDNA: parse latency (us)", "parse-unicode",
+    "0", "us",
+  )
+  url_table(
+    builder, records, "Normalization and serialization: latency (us)", "roundtrip-normalize",
+    "0", "us",
+  )
+  url_table(
+    builder, records, "Relative path resolution and serialization: latency (us)",
+    "resolve-roundtrip-path", "0", "us",
+  )
+  url_table(
+    builder, records, "Long offset-1 view and serialization: latency (us)", "roundtrip-long",
+    "1", "us",
+  )
+  url_table(
+    builder, records, "Decoded form query and serialization: latency (us)", "form-roundtrip",
+    "0", "us",
+  )
+  builder.write_string(
+    "<details>\n<summary>Toolchain, commands, and reproduction</summary>\n\n",
+  )
+  for record in records {
+    builder.write_string(
+      "**\{text(record, "os")}:**\n\n~~~text\n\{text(record, "toolchain")}\n~~~\n\n",
+    )
+    for backend in array(record, "backends") {
+      builder.write_string(
+        "\{text(backend, "backend")}: \{text(backend, "started_at_utc")} to \{text(backend, "finished_at_utc")} (UTC).\n\n~~~text\n\{text(backend, "command")}\n~~~\n\n",
+      )
+    }
+  }
+  builder.write_string(
+    "Run `moon -C benchmarks test --target all`, then `moon run scripts/benchmark.mbtx url` for local measurements. CI uses the same release commands sequentially. The report generator rejects local data, incomplete case sets, mixed revisions/runs/attempts, and changed dependency versions. Raw logs are retained for 90 days; the committed JSON preserves the complete snapshot.\n\n</details>\n",
+  )
+  builder.to_string()
+}
+
+///|
 /// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
 fn self_test() -> Unit raise {
   let valid : Json = {
@@ -384,6 +610,26 @@ fn self_test() -> Unit raise {
   assert_eq(throughput("combine", "18446744073709551615", 1.0), "n/a")
   assert_eq(throughput("hash", "0", 1.0), "n/a")
   assert_eq(cell("a|b\nc"), "a\\|b c")
+  assert_eq(cell("a|b|c\nd\ne"), "a\\|b\\|c d e")
+  assert_eq(expected_url_keys().length(), 144)
+  let url_cases : Array[Json] = []
+  for (key, _) in expected_url_keys() {
+    let parts = key.split(":").map(view => view.to_owned()).to_array()
+    url_cases.push({ "name": "\{parts[0]}:\{parts[1]}:1:\{parts[2]}" })
+  }
+  validate_url_inventory(url_cases)
+  let substituted = url_cases.copy()
+  substituted[0] = { "name": "parse-short:unrequested-library:1:0" }
+  try validate_url_inventory(substituted) catch {
+    _ => ()
+  } noraise {
+    _ => fail("A substituted URL case must fail even with 144 entries")
+  }
+  try validate_url_inventory([]) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Incomplete URL cases must fail")
+  }
   assert_eq(metric({ "mean": 1.25, "std_dev_pct": 4.9 }, "ns", 64), "1250")
   assert_eq(metric({ "mean": 1.25, "std_dev_pct": 5 }, "us", 64), "1.25*")
   assert_eq(

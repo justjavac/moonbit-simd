@@ -1,0 +1,83 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/url"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn can_parse(StringView, base? : Url, simd? : Bool) -> Bool
+
+pub fn domain_to_ascii(StringView) -> String raise ParseError
+
+pub fn domain_to_unicode(StringView) -> String raise ParseError
+
+pub fn parse(StringView, base? : Url, simd? : Bool) -> Url raise ParseError
+
+pub fn try_parse(StringView, base? : Url, simd? : Bool) -> Url?
+
+pub fn verify_dns_length(StringView) -> Bool
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror ParseError {
+  InvalidUrl(String)
+}
+
+// Types and methods
+type SearchParams
+pub fn SearchParams::append(Self, StringView, StringView) -> Unit
+pub fn SearchParams::copy(Self) -> Self
+pub fn SearchParams::delete(Self, StringView, value? : StringView) -> Unit
+pub fn SearchParams::entries(Self) -> Iter[(String, String)]
+pub fn SearchParams::from_pairs(ArrayView[(String, String)]) -> Self
+pub fn SearchParams::get(Self, StringView) -> String?
+pub fn SearchParams::get_all(Self, StringView) -> Array[String]
+pub fn SearchParams::has(Self, StringView, value? : StringView) -> Bool
+pub fn SearchParams::keys(Self) -> Iter[String]
+pub fn SearchParams::new() -> Self
+pub fn SearchParams::parse(StringView) -> Self
+pub fn SearchParams::reset(Self, StringView) -> Unit
+pub fn SearchParams::set(Self, StringView, StringView) -> Unit
+pub fn SearchParams::size(Self) -> Int32
+pub fn SearchParams::sort(Self) -> Unit
+pub fn SearchParams::to_string(Self) -> String
+pub fn SearchParams::values(Self) -> Iter[String]
+
+type Url
+pub fn Url::copy(Self) -> Self
+pub fn Url::fragment(Self) -> StringView?
+pub fn Url::has_opaque_path(Self) -> Bool
+pub fn Url::hash(Self) -> StringView
+pub fn Url::host(Self) -> StringView
+pub fn Url::hostname(Self) -> StringView
+pub fn Url::href(Self) -> String
+pub fn Url::is_special(Self) -> Bool
+pub fn Url::join(Self, StringView) -> Self raise ParseError
+pub fn Url::origin(Self) -> String
+pub fn Url::password(Self) -> StringView
+pub fn Url::pathname(Self) -> StringView
+pub fn Url::port(Self) -> StringView
+pub fn Url::protocol(Self) -> StringView
+pub fn Url::query(Self) -> StringView?
+pub fn Url::search(Self) -> StringView
+pub fn Url::search_params(Self) -> SearchParams
+pub fn Url::set_hash(Self, StringView) -> Unit
+pub fn Url::set_host(Self, StringView) -> Bool
+pub fn Url::set_hostname(Self, StringView) -> Bool
+pub fn Url::set_href(Self, StringView) -> Bool
+pub fn Url::set_password(Self, StringView) -> Bool
+pub fn Url::set_pathname(Self, StringView) -> Bool
+pub fn Url::set_port(Self, StringView) -> Bool
+pub fn Url::set_protocol(Self, StringView) -> Bool
+pub fn Url::set_search(Self, StringView) -> Unit
+pub fn Url::set_search_params(Self, SearchParams) -> Unit
+pub fn Url::set_username(Self, StringView) -> Bool
+pub fn Url::to_string(Self) -> String
+pub fn Url::username(Self) -> StringView
+pub impl Eq for Url
+pub impl Show for Url
+
+// Type aliases
+
+// Traits

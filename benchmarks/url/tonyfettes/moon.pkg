@@ -1,0 +1,5 @@
+import {
+  "tonyfettes/url" @tony,
+  "justjavac/benchmarks/url/corpus" @cases,
+  "moonbitlang/core/bench",
+} for "wbtest"

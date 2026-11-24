@@ -54,8 +54,8 @@ jobs:
         run: moon update
       - name: Verify correctness before measuring
         run: moon -C benchmarks test --target all
-      - name: Measure crc32 on all backends sequentially
-        run: moon run scripts/benchmark.mbtx crc32
+      - name: Measure workspace libraries on all backends sequentially
+        run: moon run scripts/benchmark.mbtx crc32 url
       - name: Preserve complete measurements and raw logs
         if: always()
         uses: actions/upload-artifact@v4
