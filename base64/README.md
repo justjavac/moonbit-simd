@@ -186,8 +186,9 @@ Validated locally with `moon 0.1.20261120` and
 `moonc v0.10.22+7b085e9a4-nightly` (2026-11-22).
 Native builds need a platform C compiler; JS tests need Node.js. CI uses
 MoonBit nightly and Node.js 24 and records actual versions for every runner.
-The macOS job uses `macos-26-intel`: GitHub's ARM64 runners could not
-acquire capacity in the initial run. ARM64 native execution remains unmeasured.
+The macOS job uses the maintained `macos-15` ARM64 image. The current
+official MoonBit installer supplies only an ARM64 macOS host toolchain;
+Intel macOS host installation is unavailable.
 
 Sizes are nonnegative `Int` values. `encoded_length` checks multiplication
 before allocating and panics if output cannot fit in `Int`; negative size
