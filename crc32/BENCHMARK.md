@@ -11,7 +11,7 @@ All backends run sequentially within each OS job. Both implementation choices ar
 
 The suite contains 69 cases per backend: 52 one-shot cases over 13 lengths and offsets 0/1; 10 incremental cases over five chunk sizes; and seven combination cases including UInt64-sized virtual zero suffixes. Streaming timings include hasher creation and updates. Combination timings read no payload bytes, so their throughput is not reported.
 
-MoonBit adaptively chooses an approximately 100 ms batch, takes 10 batch samples, and applies 5% winsorization before reporting statistics. Reported times include the `bench.keep` optimizer barrier. Values below are rounded to 0.001 ns; the JSON preserves all original statistics, including quartiles, variance, median absolute deviation, and IQR. CV at or above 5% is marked variable and is not a regression verdict.
+MoonBit calibrates with approximately 100 ms of warm-up and takes 10 batch samples. The measured batch targets approximately 100 ms for operations taking at least one microsecond; faster cases use 100000 iterations per batch. Statistics are calculated after 5% winsorization. Reported times include the `bench.keep` optimizer barrier. Values below are rounded to 0.001 ns; the JSON preserves all original statistics, including quartiles, variance, median absolute deviation, and IQR. CV at or above 5% is marked variable and is not a regression verdict.
 
 The SIMD request uses vector slicing on native/Wasm and scalar fallbacks on Wasm GC/JavaScript; inputs shorter than 16 bytes also use scalar tails. Hosted runner hardware and load can change between CI runs. Compare implementations within a runner/backend; these measurements do not establish universal cross-platform speed rankings.
 
