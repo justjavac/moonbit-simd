@@ -2,6 +2,12 @@ name: Benchmarks
 
 on:
   workflow_dispatch:
+    inputs:
+      module:
+        description: Library to benchmark on the complete OS/backend matrix
+        type: choice
+        options: [all, crc32, url, uuid]
+        default: all
   push:
     branches: [main]
     paths:
@@ -25,7 +31,7 @@ jobs:
   measure:
     name: Measure (${{ matrix.flag }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +44,7 @@ jobs:
             flag: windows
     env:
       BENCHMARK_RUNNER_LABEL: ${{ matrix.os }}
+      BENCHMARK_MODULE: ${{ inputs.module || 'all' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,7 +62,7 @@ jobs:
       - name: Verify correctness before measuring
         run: moon -C benchmarks test --target all
       - name: Measure workspace libraries on all backends sequentially
-        run: moon run scripts/benchmark.mbtx crc32 url
+        run: moon run scripts/benchmark.mbtx
       - name: Preserve complete measurements and raw logs
         if: always()
         uses: actions/upload-artifact@v4

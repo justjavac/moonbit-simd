@@ -103,6 +103,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
   if package_dir == "url" {
     validate_url_inventory(summaries)
   }
+  if package_dir == "uuid" {
+    validate_uuid_inventory(summaries)
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
@@ -127,6 +130,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       number(summary, "runs") == 10 &&
       number(summary, "batch_size") >= 1 else {
       fail("Invalid sample metadata: \{name}")
+    }
+    if package_dir == "uuid" {
+      validate_uuid_statistics(summary)
     }
   }
 }
@@ -194,6 +200,307 @@ fn validate_url_inventory(summaries : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Defines every UUID case independently of counts for the other libraries.
+fn expected_uuid_names() -> Map[String, Unit] {
+  let names : Map[String, Unit] = Map([])
+  let implementations = [
+    "own-scalar", "own-simd", "bobzhang", "f4ah6o", "moonbitstack", "wulisususu",
+  ]
+  for
+    (label, length) in [
+      ("simple", 32),
+      ("hyphenated", 36),
+      ("mixed", 36),
+      ("nil", 36),
+      ("max", 36),
+      ("braced", 38),
+      ("urn", 45),
+    ] {
+    let offsets = if label == "simple" || label == "hyphenated" {
+      [0, 1]
+    } else {
+      [0]
+    }
+    for implementation in implementations {
+      if label == "braced" &&
+        (implementation == "bobzhang" || implementation == "f4ah6o") {
+        continue
+      }
+      for offset in offsets {
+        for operation in ["parse", "roundtrip"] {
+          names["\{operation}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for implementation in implementations {
+    names["format-hyphenated:\{implementation}:16:0"] = ()
+    if implementation != "wulisususu" {
+      names["format-simple:\{implementation}:16:0"] = ()
+    }
+    for
+      (label, length) in [
+        ("empty", 0),
+        ("short", 31),
+        ("start", 36),
+        ("end", 36),
+      ] {
+      names["invalid-\{label}:\{implementation}:\{length}:0"] = ()
+    }
+    for
+      (operation, length) in [
+        ("parse", 36864),
+        ("roundtrip", 36864),
+        ("format", 16384),
+      ] {
+      names["\{operation}-batch1024:\{implementation}:\{length}:0"] = ()
+    }
+  }
+  for implementation in ["own-scalar", "own-simd"] {
+    for spelling in ["simple", "hyphenated"] {
+      names["format-\{spelling}-upper:\{implementation}:16:0"] = ()
+      for case in ["lower", "upper"] {
+        for offset in [0, 1] {
+          names["write-\{spelling}-\{case}:\{implementation}:16:\{offset}"] = ()
+        }
+      }
+    }
+    for
+      (label, length) in [
+        ("simple", 32),
+        ("hyphenated", 36),
+        ("braced", 38),
+        ("urn", 45),
+      ] {
+      for offset in [0, 1] {
+        names["parse-bytes-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+      }
+    }
+  }
+  names
+}
+
+///|
+/// Defines exact byte, UTF-16, output, count, and offset metadata for one UUID case.
+fn uuid_case_metadata(name : String) -> Map[String, Json] raise {
+  let pieces = name.split(":").map(view => view.to_owned()).to_array()
+  guard pieces.length() == 4 else { fail("Invalid UUID case name") }
+  let operation = pieces[0]
+  let length = @string.parse_int(pieces[2])
+  let offset = @string.parse_int(pieces[3])
+  let count = if operation.find("batch1024") is Some(_) { 1024 } else { 1 }
+  let writing = operation.find("write-") is Some(0)
+  let byte_input = operation.find("parse-bytes-") is Some(0)
+  let text_input = !byte_input &&
+    (
+      operation.find("parse-") is Some(0) ||
+      operation.find("roundtrip-") is Some(0) ||
+      operation.find("invalid-") is Some(0)
+    )
+  let output = if operation.find("invalid-") is Some(0) {
+    0
+  } else if operation.find("simple") is Some(_) &&
+    (operation.find("format-") is Some(0) || writing) {
+    32 * count
+  } else if operation.find("roundtrip-") is Some(0) ||
+    operation.find("format-") is Some(0) ||
+    writing {
+    36 * count
+  } else {
+    16 * count
+  }
+  {
+    "input_bytes": Json(length),
+    "input_code_units": if text_input {
+      Json(length)
+    } else {
+      null
+    },
+    "uuid_count": Json(count),
+    "output_bytes": Json(output),
+    "input_offset": Json(if writing { 0 } else { offset }),
+    "output_offset": Json(if writing { offset } else { 0 }),
+    "offset_unit": Json(
+      if writing {
+        "output-bytes"
+      } else if text_input {
+        "utf16-code-units"
+      } else {
+        "input-bytes"
+      },
+    ),
+  }
+}
+
+///|
+/// Rejects missing, duplicate, substituted, or mislabelled UUID measurements.
+fn validate_uuid_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_uuid_names()
+  guard expected.length() == 193 && summaries.length() == 193 else {
+    fail("Expected exactly 193 UUID cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected UUID benchmark: \{name}")
+    }
+    let _ = expected.remove(name)
+    for (key, value) in uuid_case_metadata(name) {
+      guard field(summary, key) == value else {
+        fail("Incorrect UUID \{key}: \{name}")
+      }
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete UUID inventory") }
+}
+
+///|
+/// Verifies every distribution statistic and the benchmark runner's sample metadata.
+fn validate_uuid_statistics(summary : Json) -> Unit raise {
+  let quartiles = array(summary, "quartiles")
+  guard quartiles is [Number(low, ..), Number(middle, ..), Number(high, ..)] else {
+    fail("UUID quartiles require three numeric values")
+  }
+  let minimum = number(summary, "min")
+  let maximum = number(summary, "max")
+  let tolerance = maximum.abs() * 0.000000001 + 0.000000001
+  guard low.is_finite() &&
+    middle.is_finite() &&
+    high.is_finite() &&
+    minimum <= low + tolerance &&
+    low <= middle + tolerance &&
+    middle <= high + tolerance &&
+    high <= maximum + tolerance &&
+    (middle - number(summary, "median")).abs() <= tolerance else {
+    fail("Invalid UUID quartile range")
+  }
+  for
+    statistic in [
+      "sum", "variance", "median_abs_dev", "median_abs_dev_pct", "iqr",
+    ] {
+    guard number(summary, statistic) >= 0 else {
+      fail("Invalid UUID statistic: \{statistic}")
+    }
+  }
+  let batch = number(summary, "batch_size")
+  guard batch >= 1 && batch.floor() == batch else {
+    fail("UUID batch size must be integral")
+  }
+  guard (number(summary, "iqr") - (high - low)).abs() <= tolerance &&
+    (number(summary, "sum") - number(summary, "mean") * number(summary, "runs")).abs() <=
+    tolerance * 10 else {
+    fail("Inconsistent UUID distribution statistics")
+  }
+}
+
+///|
+/// Extracts comparable toolchain versions while ignoring platform-specific paths.
+fn toolchain_versions(value : String) -> String raise {
+  let versions : Array[String] = []
+  for line in value.split("\n") {
+    if line.find(")") is Some(end) &&
+      (
+        line.find("moon ") is Some(0) ||
+        line.find("moonc ") is Some(0) ||
+        line.find("moonrun ") is Some(0)
+      ) {
+      versions.push(line[:end + 1].to_owned())
+    }
+  }
+  guard versions.length() == 3 else {
+    fail("Missing recorded toolchain versions")
+  }
+  versions.join("\n")
+}
+
+///|
+/// Verifies UUID dependency pins, source provenance, and complete runner metadata.
+fn validate_uuid_provenance(record : Json, first : Json) -> Unit raise {
+  let dependencies = array(record, "comparison_dependencies")
+  let expected = [
+    ("bobzhang", "bobzhang/uuidm", "0.2.0", "ISC"),
+    ("f4ah6o", "f4ah6o/uuidm", "0.2.1", "ISC"),
+    ("moonbitstack", "moonbitstack/moonuuid", "0.2.1", "Apache-2.0"),
+    ("wulisususu", "wulisususu/moonuuid", "0.1.0", "Apache-2.0"),
+  ]
+  guard dependencies.length() == expected.length() else {
+    fail("Missing UUID comparison dependencies")
+  }
+  for i in 0..<expected.length() {
+    let (label, package_name, version, license) = expected[i]
+    let dependency = dependencies[i]
+    guard text(dependency, "label") == label &&
+      text(dependency, "package") == package_name &&
+      text(dependency, "version") == version &&
+      text(dependency, "license") == license &&
+      text(dependency, "api") != "" else {
+      fail("Incorrect UUID comparison dependency: \{label}")
+    }
+    guard text(record, "comparison_manifest").find("\{package_name}@\{version}")
+      is Some(_) else {
+      fail("UUID dependency is not pinned in the recorded manifest")
+    }
+  }
+  guard text(record, "source_commit").iter().all(c => c.is_ascii_hexdigit()) &&
+    text(record, "run_id").iter().all(c => c.is_ascii_digit()) &&
+    @string.parse_int(text(record, "run_attempt")) >= 1 &&
+    field(record, "working_tree_dirty") == Json(false) else {
+    fail("Invalid UUID source provenance")
+  }
+  guard text(record, "module_manifest") == text(first, "module_manifest") &&
+    text(record, "comparison_manifest") == text(first, "comparison_manifest") &&
+    toolchain_versions(text(record, "toolchain")) ==
+    toolchain_versions(text(first, "toolchain")) &&
+    text(record, "node") == text(first, "node") else {
+    fail("Mixed UUID manifests or runtime versions")
+  }
+  guard text(record, "module_manifest").find("name = \"justjavac/uuid\"")
+    is Some(_) &&
+    text(record, "module_manifest").find("license = \"MIT\"") is Some(_) else {
+    fail("Incorrect UUID module metadata")
+  }
+  for
+    key in [
+      "runner_label", "image_os", "image_version", "node", "dependency_tree",
+    ] {
+    guard text(record, key) != "" else {
+      fail("Missing UUID runner metadata: \{key}")
+    }
+  }
+  let cpu = field(record, "cpu")
+  guard text(cpu, "architecture") != "" else {
+    fail("Missing UUID CPU architecture")
+  }
+  match field(cpu, "logical_cpus") {
+    Number(count, ..) => {
+      guard count.is_finite() && count >= 1 else { fail("Invalid CPU count") }
+    }
+    String(count) => {
+      guard @string.parse_int(count) >= 1 else { fail("Invalid CPU count") }
+    }
+    _ => fail("Missing CPU count")
+  }
+  for backend in array(record, "backends") {
+    let started = text(backend, "started_at_utc")
+    let finished = text(backend, "finished_at_utc")
+    guard started.length() == 20 &&
+      finished.length() == 20 &&
+      started <= finished &&
+      started[19] == 'Z' &&
+      finished[19] == 'Z' else {
+      fail("Invalid UUID measurement timestamps")
+    }
+    let command = text(backend, "command")
+    guard command.find("--release") is Some(_) &&
+      command.find("--no-parallelize") is Some(_) &&
+      command.find("justjavac/benchmarks/uuid") is Some(_) &&
+      command.find("--target " + text(backend, "backend")) is Some(_) else {
+      fail("Missing UUID benchmark command")
+    }
+  }
+}
+
+///|
 /// Rejects local measurements and mixed CI revisions or attempts in a published snapshot.
 fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise {
   guard records.length() == 3 else {
@@ -231,6 +538,9 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
     guard array(record, "comparison_dependencies") ==
       array(first, "comparison_dependencies") else {
       fail("Mixed comparison dependency versions")
+    }
+    if package_dir == "uuid" {
+      validate_uuid_provenance(record, first)
     }
     let backends = array(record, "backends")
     guard backends.length() == 4 else { fail("Missing backend results") }
@@ -395,6 +705,9 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
   if package_dir == "url" {
     return url_report(records)
+  }
+  if package_dir == "uuid" {
+    return uuid_report(records)
   }
   let first = records[0]
   let revision = text(first, "source_commit")
@@ -600,8 +913,392 @@ fn url_report(records : Array[Json]) -> String raise {
 }
 
 ///|
+/// Renders one UUID public-operation comparison for all twelve environments.
+fn uuid_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  bytes : String,
+  offset : String,
+  units : String,
+  implementations~ : Array[String] = [
+    "own-scalar", "own-simd", "bobzhang", "f4ah6o", "moonbitstack", "wulisususu",
+  ],
+) -> Unit raise {
+  results_table(
+    builder,
+    records,
+    title,
+    workload,
+    bytes,
+    offset,
+    units,
+    @string.parse_int(bytes).to_double(),
+    implementations~,
+    labels=implementations.map(label => {
+      if label == "own-scalar" {
+        "ours scalar"
+      } else if label == "own-simd" {
+        "ours SIMD request"
+      } else {
+        label
+      }
+    }),
+  )
+}
+
+///|
+/// Renders a concise UUID comparison with every case preserved in the JSON snapshot.
+fn uuid_report(records : Array[Json]) -> String raise {
+  let first = records[0]
+  let revision = text(first, "source_commit")
+  let repository = text(first, "repository")
+  let builder = StringBuilder()
+  builder.write_string("# UUID performance comparison\n\n")
+  builder.write_string(
+    "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{repository}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
+  )
+  builder.write_string(
+    "**Scope:** 3 operating systems x 4 backends x 193 cases = **2316 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) retains every unrounded statistic, UUID count, byte/code-unit length, view/output offset, command, timestamp, dependency, and runner detail.\n\n## At a glance\n\nNative hyphenated parsing, 36 ASCII code units per UUID:\n\n",
+  )
+  for record in records {
+    let backends = array(record, "backends")
+    let position = backends
+      .search_by(backend => text(backend, "backend") == "native")
+      .unwrap_or_else(() => fail("Missing native UUID results"))
+    let values = index(backends[position])
+    let scalar = number(values["parse-hyphenated:own-scalar:36:0"], "mean")
+    let vector = number(values["parse-hyphenated:own-simd:36:0"], "mean")
+    let mut fastest = "bobzhang"
+    let mut external = number(values["parse-hyphenated:bobzhang:36:0"], "mean")
+    for label in ["f4ah6o", "moonbitstack", "wulisususu"] {
+      let mean = number(values["parse-hyphenated:\{label}:36:0"], "mean")
+      if mean < external {
+        fastest = label
+        external = mean
+      }
+    }
+    builder.write_string(
+      "- **\{text(record, "os")}:** SIMD request \{metric(values["parse-hyphenated:own-simd:36:0"], "ns", 36)} ns; **\{decimal(scalar / vector)}x** scalar and **\{decimal(external / vector)}x** the fastest external mean (\{fastest}).\n",
+    )
+  }
+  builder.write_string(
+    "\nRatios below 1 mean slower execution. These are workload-specific measured means; variability marks and the full distributions qualify the comparisons.\n\n## Implementations\n\n| Label | Package / pinned version | Public API measured |\n| --- | --- | --- |\n| ours scalar | justjavac/uuid / source above | parse and format with Scalar |\n| ours SIMD request | justjavac/uuid / source above | parse and format with Simd |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| \{cell(text(dependency, "label"))} | \{cell(text(dependency, "package"))} / \{cell(text(dependency, "version"))} | \{cell(text(dependency, "api"))} |\n",
+    )
+  }
+  builder.write_string(
+    "\n## Method\n\n- Every adapter matches independent binary values and arithmetic formatting oracles, including a deterministic 1024-UUID corpus. f4ah6o is a bobzhang fork; agreement is not independent proof of complete grammar conformance.\n- Parse-only and parse-plus-canonical-formatting are separate. Formatting starts from UUID values prepared outside the timer. Batch callbacks include public calls, adapter logic, and a keep barrier for each of 1024 distinct UUIDs.\n- Input construction and subview selection are outside timing. Required StringView-to-String conversions for bobzhang, f4ah6o, and wulisususu stay inside timing. Full views can reuse their String; offset-1 views materialize their contents. bobzhang/f4ah6o use from_urn for the URN case.\n- bobzhang/f4ah6o expose no braced parser; those cases are omitted. wulisususu exposes no compact formatter; it is omitted from that comparison. Uppercase formatting, arbitrary-byte parsing, and reusable-buffer writes compare our scalar and SIMD paths separately.\n- The SIMD request executes checked portable V128 kernels on native and linear-memory Wasm, with scalar fallback on Wasm GC/JS. UTF-16 loads account for the view's code-unit start; byte loads and output stores stay inside their ranges. Output-string allocation and ASCII decoding are timed; write_* reuses a prepared buffer.\n- Release mode, sequential backends, 10 batch samples, and 5% winsorization. Calibration targets about 100 ms; submicrosecond cases use 100000 calls per batch. Timings include bench.keep. **Bold** marks the smallest mean in a row; `*` marks CV >= 5% and possible noise, not statistical significance.\n\n## Runner context\n\n| OS | CPU | Architecture / logical CPUs | Runner / image | Node.js |\n| --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(cpu, "model"))} | \{cell(text(cpu, "architecture"))} / \{display(field(cpu, "logical_cpus"))} | \{cell(text(record, "runner_label"))} / \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} | \{cell(text(record, "node"))} |\n",
+    )
+  }
+  builder.write_string("\n")
+  uuid_table(
+    builder, records, "Hyphenated UUID: parse latency (ns)", "parse-hyphenated",
+    "36", "0", "ns",
+  )
+  uuid_table(
+    builder, records, "Compact UUID: parse latency (ns)", "parse-simple", "32", "0",
+    "ns",
+  )
+  uuid_table(
+    builder, records, "Hyphenated UUID: parse and canonical output (ns)", "roundtrip-hyphenated",
+    "36", "0", "ns",
+  )
+  uuid_table(
+    builder, records, "Prepared UUID: hyphenated formatting (ns)", "format-hyphenated",
+    "16", "0", "ns",
+  )
+  uuid_table(
+    builder,
+    records,
+    "Prepared UUID: compact formatting (ns)",
+    "format-simple",
+    "16",
+    "0",
+    "ns",
+    implementations=[
+      "own-scalar", "own-simd", "bobzhang", "f4ah6o", "moonbitstack",
+    ],
+  )
+  uuid_table(
+    builder, records, "Hyphenated UUID: offset-1 StringView parsing (ns)", "parse-hyphenated",
+    "36", "1", "ns",
+  )
+  uuid_table(
+    builder, records, "1024 distinct UUIDs: batch parse latency (us)", "parse-batch1024",
+    "36864", "0", "us",
+  )
+  uuid_table(
+    builder,
+    records,
+    "Hyphenated bytes: offset-1 parsing (ns)",
+    "parse-bytes-hyphenated",
+    "36",
+    "1",
+    "ns",
+    implementations=["own-scalar", "own-simd"],
+  )
+  uuid_table(
+    builder,
+    records,
+    "Reusable output buffer: offset-1 hyphenated write (ns)",
+    "write-hyphenated-lower",
+    "16",
+    "1",
+    "ns",
+    implementations=["own-scalar", "own-simd"],
+  )
+  builder.write_string(
+    "<details>\n<summary>Toolchain, commands, and reproduction</summary>\n\n",
+  )
+  for record in records {
+    builder.write_string(
+      "**\{text(record, "os")}:**\n\n~~~text\n\{text(record, "toolchain")}\n~~~\n\n",
+    )
+  }
+  builder.write_string(
+    "Run `moon -C benchmarks test --target all`, then `moon run scripts/benchmark.mbtx uuid` for local measurements. Select uuid in the Benchmarks workflow for a complete CI snapshot. The collector and report validator require the exact 193-case inventory; the report also rejects local data, incomplete matrices, mixed runs/attempts/source revisions, changed dependency pins, invalid statistics, and mismatched length metadata. Raw logs are retained for 90 days. Reports retain the measured source commit when committed later.\n\n</details>\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Builds a complete synthetic UUID summary exclusively for validator regression tests.
+fn uuid_test_summary(name : String) -> Json raise {
+  let values = uuid_case_metadata(name)
+  for
+    (key, value) in [
+      ("name", Json(name)),
+      ("mean", Json(1)),
+      ("min", Json(1)),
+      ("max", Json(1)),
+      ("median", Json(1)),
+      ("std_dev", Json(0)),
+      ("std_dev_pct", Json(0)),
+      ("sum", Json(10)),
+      ("variance", Json(0)),
+      ("median_abs_dev", Json(0)),
+      ("median_abs_dev_pct", Json(0)),
+      ("iqr", Json(0)),
+      ("runs", Json(10)),
+      ("batch_size", Json(100000)),
+      ("quartiles", Json([1, 1, 1])),
+    ] {
+    values[key] = value
+  }
+  Json(values)
+}
+
+///|
+/// Builds a complete synthetic CI record exclusively for publication-validator tests.
+fn uuid_test_record(os : String, summaries : Array[Json]) -> Json {
+  let backends : Array[Json] = []
+  for backend in ["native", "wasm", "wasm-gc", "js"] {
+    backends.push({
+      "backend": backend,
+      "time_unit": "microseconds",
+      "command": "moon -C benchmarks bench --target \{backend} --release --no-parallelize -p justjavac/benchmarks/uuid",
+      "started_at_utc": "2026-11-25T00:00:00Z",
+      "finished_at_utc": "2026-11-25T00:01:00Z",
+      "summaries": Json(summaries),
+    })
+  }
+  {
+    "source": "github-actions",
+    "source_commit": String::make(40, 'a'),
+    "repository": "test/validator-only",
+    "module": "justjavac/uuid",
+    "os": os,
+    "run_id": "42",
+    "run_attempt": "1",
+    "run_url": "https://github.com/test/validator-only/actions/runs/42",
+    "working_tree_dirty": false,
+    "module_manifest": "name = \"justjavac/uuid\"\nlicense = \"MIT\"\n",
+    "comparison_manifest": "bobzhang/uuidm@0.2.0\nf4ah6o/uuidm@0.2.1\nmoonbitstack/moonuuid@0.2.1\nwulisususu/moonuuid@0.1.0\n",
+    "dependency_tree": "Synthetic validator test fixture",
+    "runner_label": os,
+    "image_os": os,
+    "image_version": "test-image",
+    "node": "v24.0.0",
+    "toolchain": "moon test (abc 2026-11-25) /tool/moon\nmoonc test (abc 2026-11-25) /tool/moonc\nmoonrun test (abc 2026-11-25) /tool/moonrun",
+    "cpu": {
+      "model": "Validator test CPU",
+      "architecture": "test64",
+      "logical_cpus": 4,
+    },
+    "comparison_dependencies": [
+      {
+        "label": "bobzhang",
+        "package": "bobzhang/uuidm",
+        "version": "0.2.0",
+        "license": "ISC",
+        "api": "test",
+      },
+      {
+        "label": "f4ah6o",
+        "package": "f4ah6o/uuidm",
+        "version": "0.2.1",
+        "license": "ISC",
+        "api": "test",
+      },
+      {
+        "label": "moonbitstack",
+        "package": "moonbitstack/moonuuid",
+        "version": "0.2.1",
+        "license": "Apache-2.0",
+        "api": "test",
+      },
+      {
+        "label": "wulisususu",
+        "package": "wulisususu/moonuuid",
+        "version": "0.1.0",
+        "license": "Apache-2.0",
+        "api": "test",
+      },
+    ],
+    "backends": Json(backends),
+  }
+}
+
+///|
+/// Checks exact inventories, metadata, distributions, and publication safeguards.
+fn uuid_self_test() -> Unit raise {
+  assert_eq(expected_uuid_names().length(), 193)
+  let summaries : Array[Json] = []
+  for (name, _) in expected_uuid_names() {
+    summaries.push(uuid_test_summary(name))
+  }
+  validate_uuid_inventory(summaries)
+  for summary in summaries {
+    validate_uuid_statistics(summary)
+  }
+  let substituted = summaries.copy()
+  substituted[0] = uuid_test_summary("parse-hyphenated:unrequested:36:0")
+  try validate_uuid_inventory(substituted) catch {
+    _ => ()
+  } noraise {
+    _ => fail("A substituted UUID case must fail")
+  }
+  let duplicate = summaries.copy()
+  duplicate[0] = duplicate[1]
+  try validate_uuid_inventory(duplicate) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Duplicate UUID cases must fail")
+  }
+  try validate_uuid_inventory(summaries[:192].to_owned()) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Missing UUID cases must fail")
+  }
+  let incorrect = uuid_test_summary("parse-hyphenated:own-simd:36:0")
+  guard incorrect is Object(fields) else { fail("Expected a test object") }
+  fields["input_code_units"] = Json(32)
+  let wrong_metadata = summaries.copy()
+  let metadata_index = summaries
+    .search_by(summary => {
+      text(summary, "name") == "parse-hyphenated:own-simd:36:0"
+    })
+    .unwrap_or_else(() => fail("Missing metadata test case"))
+  wrong_metadata[metadata_index] = incorrect
+  try validate_uuid_inventory(wrong_metadata) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Incorrect UTF-16 length must fail")
+  }
+  for
+    (key, bad_value) in [
+      ("batch_size", Json(1.5)),
+      ("sum", Json(11)),
+      ("variance", Json(-1)),
+      ("quartiles", Json([1, 2, 1])),
+    ] {
+    let invalid = uuid_test_summary("parse-simple:own-scalar:32:0")
+    guard invalid is Object(values) else { fail("Expected a test summary") }
+    values[key] = bad_value
+    try validate_uuid_statistics(invalid) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Invalid UUID statistics must fail")
+    }
+  }
+  assert_eq(
+    number(
+      uuid_test_summary("write-simple-upper:own-simd:16:1"),
+      "output_offset",
+    ),
+    1,
+  )
+  assert_eq(
+    number(uuid_test_summary("parse-batch1024:own-simd:36864:0"), "uuid_count"),
+    1024,
+  )
+  let records = ["linux", "macos", "windows"].map(os => {
+    uuid_test_record(os, summaries)
+  })
+  validate_snapshot(records, "uuid")
+  assert_true(report("uuid", records).find("2316 measurements") is Some(_))
+  for
+    (key, value) in [
+      ("source", Json("local")),
+      ("source_commit", Json(String::make(40, 'b'))),
+      ("run_attempt", Json("2")),
+      ("working_tree_dirty", Json(true)),
+      ("comparison_manifest", Json("unpinned")),
+      ("module_manifest", Json("wrong module")),
+      ("node", Json("v25.0.0")),
+      ("runner_label", Json("")),
+    ] {
+    let changed = @json.parse(records[1].stringify())
+    guard changed is Object(values) else { fail("Expected a test record") }
+    values[key] = value
+    let invalid = records.copy()
+    invalid[1] = changed
+    try validate_snapshot(invalid, "uuid") catch {
+      _ => ()
+    } noraise {
+      _ => fail("Invalid UUID provenance must fail")
+    }
+  }
+  try validate_snapshot(records[:2].to_owned(), "uuid") catch {
+    _ => ()
+  } noraise {
+    _ => fail("A missing UUID OS must fail")
+  }
+  let invalid_backend = @json.parse(
+    array(records[0], "backends")[0].stringify(),
+  )
+  guard invalid_backend is Object(backend_fields) else {
+    fail("Expected a backend")
+  }
+  let invalid_summary = uuid_test_summary(text(summaries[0], "name"))
+  guard invalid_summary is Object(summary_fields) else {
+    fail("Expected a summary")
+  }
+  summary_fields["mean"] = Json(0)
+  let wrong_range = summaries.copy()
+  wrong_range[0] = invalid_summary
+  backend_fields["summaries"] = Json(wrong_range)
+  try validate_backend(invalid_backend, "uuid") catch {
+    _ => ()
+  } noraise {
+    _ => fail("A zero UUID timing must fail")
+  }
+}
+
+///|
 /// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
 fn self_test() -> Unit raise {
+  uuid_self_test()
   let valid : Json = {
     "name": "combine:gf2:18446744073709551615:0",
     "mean": 1.0,

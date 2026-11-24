@@ -115,6 +115,11 @@ options(
 - Portable vector operations are not hardware CRC or carry-less multiplication.
   Do not assume x86, ARM, or optional CPU instructions; architecture-specific
   acceleration needs feature checks and a safe fallback.
+- Inspect generated native lowering before assuming a vector primitive maps
+  efficiently to hardware. On the recorded x86 toolchain, generic byte
+  shuffle/swizzle uses a scalar fallback unless SSSE3 is enabled. Prefer portable
+  lane operations or fixed-width packing when measurements justify it, and keep
+  native and Wasm dispatch decisions separate.
 - Measure the whole public operation before selecting a default. In the
   [CRC32 CI snapshot](crc32/BENCHMARK.md), SIMD was slower than scalar for 1 MiB
   owned input on native and faster on linear-memory Wasm; other workloads differ.
@@ -279,7 +284,7 @@ moon test --target all
 moon info
 moon fmt
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url
+moon run scripts/coverage_report.mbtx local crc32 url uuid
 ```
 
 For comparison changes, also run `moon -C benchmarks check --target all --deny-warn`,
@@ -317,7 +322,8 @@ and global hooks; do not change identity settings or print authentication tokens
 - [Current SIMD API](https://mooncakes.io/docs/moonbitlang/core/simd)
 - [Historical v128 API](https://mooncakes.io/docs/moonbitlang/core/v128)
 - [crc32fast](https://crates.io/crates/crc32fast): CRC32 API and algorithm reference.
-- [CRC32 guide](crc32/README.md) and [URL guide](url/README.md): module-specific contracts.
+- [CRC32 guide](crc32/README.md), [URL guide](url/README.md), and
+  [UUID guide](uuid/README.md): module-specific contracts.
 - [Comparison harness](benchmarks/README.md), [collector](scripts/benchmark.mbtx),
   [report generator](scripts/benchmark_report.mbtx), and
   [native coverage exporter](scripts/coverage_report.mbtx): shared automation.

@@ -1,0 +1,56 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/uuid"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn parse(StringView, algorithm? : Algorithm) -> Uuid raise UuidError
+
+pub fn parse_bytes(BytesView, algorithm? : Algorithm) -> Uuid raise UuidError
+
+pub fn parse_hyphenated(StringView, algorithm? : Algorithm) -> Uuid raise UuidError
+
+pub fn parse_simple(StringView, algorithm? : Algorithm) -> Uuid raise UuidError
+
+pub fn simd_available() -> Bool
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror UuidError {
+  InvalidUuid
+  InvalidByteLength(Int32)
+  InvalidBuffer(offset~ : Int32, required~ : Int32, length~ : Int32)
+}
+
+// Types and methods
+#derive(Eq, @debug.Debug)
+pub(all) enum Algorithm {
+  Auto
+  Scalar
+  Simd
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) enum AsciiCase {
+  Lower
+  Upper
+}
+
+#derive(Compare, Eq, Hash, @debug.Debug)
+pub struct Uuid {
+  // private fields
+}
+pub fn Uuid::format_hyphenated(Self, case? : AsciiCase, algorithm? : Algorithm) -> String
+pub fn Uuid::format_simple(Self, case? : AsciiCase, algorithm? : Algorithm) -> String
+pub fn Uuid::from_bytes(BytesView) -> Self raise UuidError
+pub fn Uuid::to_bytes(Self) -> Bytes
+pub fn Uuid::to_string(Self) -> String
+pub fn Uuid::write_hyphenated(Self, FixedArray[Byte], offset? : Int32, case? : AsciiCase, algorithm? : Algorithm) -> Unit raise UuidError
+pub fn Uuid::write_simple(Self, FixedArray[Byte], offset? : Int32, case? : AsciiCase, algorithm? : Algorithm) -> Unit raise UuidError
+pub impl Show for Uuid
+
+// Type aliases
+
+// Traits

@@ -18,6 +18,7 @@ library modules.
 | --- | --- | --- | --- |
 | `justjavac/crc32` | IEEE CRC-32, streaming, and checksum combination | [Guide](crc32/README.md) · [Examples](crc32/README.mbt.md) | [BENCHMARK.md](crc32/BENCHMARK.md) |
 | `justjavac/url` | WHATWG URL parsing, normalization, resolution, and form queries, ported from Ada | [Guide](url/README.md) · [Examples](url/README.mbt.md) | [BENCHMARK.md](url/BENCHMARK.md) |
+| `justjavac/uuid` | UUID text/byte parsing, formatting, and reusable output buffers, ported from uuid-simd | [Guide](uuid/README.md) · [Examples](uuid/README.mbt.md) | [BENCHMARK.md](uuid/BENCHMARK.md) |
 
 Follow each guide for installation, API usage, and release availability. New
 libraries are added as sibling modules at the repository root.
@@ -57,7 +58,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url
+moon run scripts/coverage_report.mbtx local crc32 url uuid
 ```
 
 ## Benchmarks
@@ -71,12 +72,15 @@ against `gaato/crc`, `gmlewis/crc32`, `kujirahand/crc32`, and
 `moonbitstack/mooncrypt/sum/crc32`, with pinned dependencies isolated from the
 published library. Its separate URL adapter packages compare `tonyfettes/url`,
 `moonbitstack/moonurl` in WHATWG mode, and `connect0459/urllib` against
-`justjavac/url`. Reproduce locally from the repository root:
+`justjavac/url`. The UUID suite compares `bobzhang/uuidm`, `f4ah6o/uuidm`,
+`moonbitstack/moonuuid`, and `wulisususu/moonuuid`. Reproduce locally from the
+repository root:
 
 ```text
 moon -C benchmarks test --target all
 moon run scripts/benchmark.mbtx crc32
 moon run scripts/benchmark.mbtx url
+moon run scripts/benchmark.mbtx uuid
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as
