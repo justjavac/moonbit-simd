@@ -1,9 +1,9 @@
 # Development benchmarks
 
 This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
-and Base64 comparison adapters. Its nested workspace links the local
-`justjavac/crc32`, `justjavac/url`, and `justjavac/base64` modules while
-keeping third-party dependencies out of the published library.
+Base64, and decimal integer comparison adapters. Its nested workspace links the
+local `justjavac/crc32`, `justjavac/url`, `justjavac/base64`, and `justjavac/atoi`
+modules while keeping third-party dependencies out of the published library.
 
 Run `moon update` after installing MoonBit, then
 `moon -C benchmarks test --target all` before measuring. Results are recorded
@@ -50,3 +50,18 @@ Run `moon run scripts/benchmark.mbtx base64`. Results are recorded in
 [base64/BENCHMARK.md](../base64/BENCHMARK.md), with every statistic and complete
 CI provenance in its companion JSON. Workflow dispatch can select Base64 alone;
 each selected module still requires the full three-OS/four-backend matrix.
+
+The [integer adapters](atoi) compare the six-operation decimal port's scalar and
+SIMD requests with core string parsers and BigInt restricted to the same 128-bit
+ranges. Full and prefix parsing are separate workloads. Core's required UTF-8
+conversion, plus handling, missing-prefix scan, and wide range checks remain
+inside timing; returned values are formatted only for equivalence tests.
+
+There are 176 integer cases per backend, including one/eight/sixteen/thirty-two
+digit inputs, 64/128-bit limits, prefix suffixes, malformed bytes, overflow,
+offsets 1/3/15, and 4 KiB/1 MiB leading-zero runs. The excessive-size case measures
+only this library because core has no equivalent digit budget. Run
+`moon -C benchmarks test atoi --target all`, then `moon run scripts/benchmark.mbtx atoi`.
+The collector and report validator independently check the exact case inventory.
+Local rendering uses
+`moon run scripts/benchmark_report.mbtx --local atoi _build/benchmarks/atoi/windows.json _build/atoi-report`.

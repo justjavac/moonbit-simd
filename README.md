@@ -19,6 +19,7 @@ library modules.
 | `justjavac/crc32` | IEEE CRC-32, streaming, and checksum combination | [Guide](crc32/README.md) · [Examples](crc32/README.mbt.md) | [BENCHMARK.md](crc32/BENCHMARK.md) |
 | `justjavac/url` | WHATWG URL parsing, normalization, resolution, and form queries, ported from Ada | [Guide](url/README.md) · [Examples](url/README.mbt.md) | [BENCHMARK.md](url/BENCHMARK.md) |
 | `justjavac/base64` | RFC 4648 Base64 and WHATWG forgiving decoding, ported from base64-simd | [Guide](base64/README.md) · [Examples](base64/README.mbt.md) | [BENCHMARK.md](base64/BENCHMARK.md) |
+| `justjavac/atoi` | Decimal byte-to-integer parsing, exact prefixes, and 8–128-bit ranges, ported from atoi_simd | [Guide](atoi/README.md) · [Examples](atoi/README.mbt.md) | [BENCHMARK.md](atoi/BENCHMARK.md) |
 
 Follow each guide for installation, API usage, and release availability. New
 libraries are added as sibling modules at the repository root.
@@ -58,7 +59,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url base64
+moon run scripts/coverage_report.mbtx local crc32 url base64 atoi
 ```
 
 ## Benchmarks
@@ -79,6 +80,10 @@ Base64 adapters compare core, `gmlewis/base64`,
 `justjavac/base64`. Their cases distinguish string/byte decoding, output
 allocation, buffer reuse, partial views, and matching RFC 4648 policies.
 
+Integer adapters compare scalar/SIMD decimal parsing with bundled core string
+parsers and bounded BigInt. Required UTF-8 conversion, prefix scans, and range
+checks remain inside the timer.
+
 Reproduce locally from the repository root:
 
 ```text
@@ -86,6 +91,7 @@ moon -C benchmarks test --target all
 moon run scripts/benchmark.mbtx crc32
 moon run scripts/benchmark.mbtx url
 moon run scripts/benchmark.mbtx base64
+moon run scripts/benchmark.mbtx atoi
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as

@@ -10,6 +10,7 @@ on:
         options:
           - all
           - base64
+          - atoi
           - crc32
           - url
   push:

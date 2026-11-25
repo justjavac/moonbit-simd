@@ -2,4 +2,5 @@ members = [
   "./crc32",
   "./url",
   "./base64",
+  "./atoi",
 ]
