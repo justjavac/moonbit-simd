@@ -6,5 +6,6 @@ members = [
   "vendor/tonyfettes-utf8",
   "../base64",
   "../atoi",
+  "../argminmax",
   "../uuid",
 ]

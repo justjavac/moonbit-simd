@@ -92,7 +92,7 @@ jobs:
         run: moon test --target native --enable-coverage
 
       - name: Generate filtered native Cobertura reports
-        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url utf8 base64 atoi uuid
+        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url utf8 base64 atoi argminmax uuid
 
       - name: Save the coverage report
         uses: actions/upload-artifact@v4
@@ -104,6 +104,7 @@ jobs:
             coverage-utf8-${{ matrix.flag }}.xml
             coverage-base64-${{ matrix.flag }}.xml
             coverage-atoi-${{ matrix.flag }}.xml
+            coverage-argminmax-${{ matrix.flag }}.xml
             coverage-uuid-${{ matrix.flag }}.xml
           if-no-files-found: error
 
@@ -111,7 +112,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
-          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml,coverage-utf8-${{ matrix.flag }}.xml,coverage-base64-${{ matrix.flag }}.xml,coverage-atoi-${{ matrix.flag }}.xml,coverage-uuid-${{ matrix.flag }}.xml
+          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml,coverage-utf8-${{ matrix.flag }}.xml,coverage-base64-${{ matrix.flag }}.xml,coverage-atoi-${{ matrix.flag }}.xml,coverage-argminmax-${{ matrix.flag }}.xml,coverage-uuid-${{ matrix.flag }}.xml
           flags: ${{ matrix.flag }}
           name: workspace-${{ matrix.flag }}
           disable_search: true

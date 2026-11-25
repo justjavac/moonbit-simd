@@ -1,0 +1,8 @@
+import {
+  "justjavac/argminmax" @ours,
+  "moonbitlang/core/bench",
+  "moonbitlang/core/env",
+  "moonbitlang/core/double",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

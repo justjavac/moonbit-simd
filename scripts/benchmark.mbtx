@@ -619,7 +619,7 @@ async fn main {
     [selector]
   }
   let selected_modules = if requested == ["all"] {
-    ["crc32", "url", "utf8", "base64", "atoi", "uuid"]
+    ["crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid"]
   } else {
     requested
   }
@@ -678,10 +678,17 @@ async fn main {
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/utf8",
         ]
-      } else if package_dir == "atoi" {
+      } else if package_dir == "atoi" || package_dir == "argminmax" {
         [
-          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
-          "-p", "justjavac/benchmarks/atoi",
+          "-C",
+          "benchmarks",
+          "bench",
+          "--target",
+          backend,
+          "--release",
+          "--no-parallelize",
+          "-p",
+          "justjavac/benchmarks/" + package_dir,
         ]
       } else if package_dir == "base64" {
         [
@@ -721,6 +728,9 @@ async fn main {
       }
       if package_dir == "atoi" {
         validate_atoi_inventory(records)
+      }
+      if package_dir == "argminmax" {
+        validate_argminmax_inventory(records)
       }
       guard package_dir != "crc32" || records.length() == 69 else {
         fail("Expected 69 crc32 cases, received \{records.length()}")
@@ -860,6 +870,17 @@ async fn main {
             "api": "encode(BytesView), decode(StringView)/decode_bytes(BytesView), strict=true",
           },
         ]
+      } else if package_dir == "argminmax" {
+        [
+          {
+            "label": "baseline",
+            "package": "justjavac/benchmarks/argminmax",
+            "version": "0.1.0",
+            "core_version": bundled_core_version(toolchain),
+            "license": "MIT",
+            "api": "Independent linear numeric reference; identical prepared typed views and NaN/bitmap semantics",
+          },
+        ]
       } else if package_dir == "atoi" {
         [
           {
@@ -968,6 +989,45 @@ async fn main {
           "license": "MIT",
           "timed": false,
         }
+      } else if package_dir == "argminmax" {
+        {
+          "package": "argminmax",
+          "version": "0.7.1",
+          "revision": "f68aba5c251e9dc093f3939c0f9607c942228311",
+          "crate_sha256": "088a9c28ca36500c581f9f54b63460492d2b4f71e1e61d176e8fb79565109b01",
+          "license": "MIT",
+          "timed": false,
+        }
+      } else {
+        Json::null()
+      },
+      "workload_metadata": if package_dir == "argminmax" {
+        {
+          "cases_per_backend": 162,
+          "elements": [0, 33, 4096, 131105, 1048576],
+          "name_fields": [
+            "operation-and-kind", "implementation", "numeric-bytes", "element-offset",
+          ],
+          "validity_bit_offset": 3,
+          "widths": {
+            "u8": 1,
+            "i8": 1,
+            "u16": 2,
+            "i16": 2,
+            "u32": 4,
+            "i32": 4,
+            "u64": 8,
+            "i64": 8,
+            "f32": 4,
+            "f64": 8,
+            "f16": 2,
+            "bf16": 2,
+            "u128": 16,
+            "i128": 16,
+          },
+          "input_storage": "Prepared typed arrays and offset-one views; wrapper construction and bitmap generation are outside timing",
+          "timed": "Public calls or the independent reference, callback dispatch, optional-result adapters, bitmap validation, and bench.keep",
+        }
       } else {
         Json::null()
       },
@@ -976,4 +1036,84 @@ async fn main {
     @fs.write_text("\{directory}/\{os}.json", result.stringify(indent=2))
     println("Saved \{directory}/\{os}.json")
   }
+}
+
+///|
+/// Defines every extrema workload with numeric byte widths and element offsets.
+fn expected_argminmax_names() -> Map[String, Unit] {
+  let workloads : Array[(String, Int32, Int32)] = []
+  for
+    (kind, width) in [
+      ("u8", 1),
+      ("i8", 1),
+      ("u16", 2),
+      ("i16", 2),
+      ("u32", 4),
+      ("i32", 4),
+      ("u64", 8),
+      ("i64", 8),
+      ("f32", 4),
+      ("f64", 8),
+      ("f16", 2),
+      ("bf16", 2),
+      ("u128", 16),
+      ("i128", 16),
+    ] {
+    for length in [33, 4096] {
+      workloads.push(("argminmax-" + kind, length * width, 0))
+    }
+  }
+  for (kind, width) in [("i32", 4), ("f64", 8)] {
+    workloads.push(("argminmax-" + kind, 0, 0))
+    for (length, offset) in [(4096, 1), (1048576, 0), (1048576, 1)] {
+      workloads.push(("argminmax-" + kind, length * width, offset))
+    }
+    for operation in ["min", "max"] {
+      workloads.push(("arg" + operation + "-" + kind, 4096 * width, 0))
+    }
+  }
+  for (kind, width) in [("f32", 4), ("f64", 8)] {
+    for position in ["first", "last"] {
+      for policy in ["ignore", "propagate"] {
+        workloads.push(
+          (policy + "-nan-" + position + "-" + kind, 4096 * width, 0),
+        )
+      }
+    }
+  }
+  for pattern in ["dense", "sparse", "all-null", "nan-null"] {
+    workloads.push(("masked-" + pattern + "-f64", 32768, 0))
+  }
+  for (kind, width) in [("u8", 1), ("u16", 2)] {
+    workloads.push(("index-boundary-" + kind, 131105 * width, 0))
+  }
+  let expected : Map[String, Unit] = Map([])
+  for (label, bytes, offset) in workloads {
+    for implementation in ["own-scalar", "own-simd", "baseline"] {
+      expected[label +
+      ":" +
+      implementation +
+      ":" +
+      bytes.to_string() +
+      ":" +
+      offset.to_string()] = ()
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects missing, substituted, or duplicate extrema cases before saving artifacts.
+fn validate_argminmax_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_argminmax_names()
+  guard records.length() == expected.length() else {
+    fail("Expected 162 extrema cases")
+  }
+  for record in records {
+    guard record is { "name": String(name), .. } && expected.contains(name) else {
+      fail("Unexpected or duplicate extrema case")
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Missing extrema cases") }
 }

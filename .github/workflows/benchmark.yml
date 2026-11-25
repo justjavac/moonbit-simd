@@ -11,6 +11,7 @@ on:
           - all
           - base64
           - atoi
+          - argminmax
           - crc32
           - url
           - utf8
