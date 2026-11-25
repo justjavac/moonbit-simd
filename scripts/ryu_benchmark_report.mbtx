@@ -242,6 +242,25 @@ fn validate_metadata(record : Json) -> Unit raise {
 }
 
 ///|
+/// Normalizes only the checkout root while preserving dependency versions and relative paths.
+fn canonical_dependency_tree(tree : String) -> String raise {
+  let normalized = tree
+    .replace_all(old="\\", new="/")
+    .replace_all(old="\r\n", new="\n")
+  let header = "justjavac/benchmarks@0.1.0 (local "
+  guard normalized.has_prefix(header) &&
+    normalized.find("/benchmarks) [workspace member]:\n") is Some(end) &&
+    end > header.length() else {
+    fail("Missing Ryu dependency workspace root")
+  }
+  let root = normalized[header.length():end].to_owned()
+  guard root.find("\n") is None && root.find("\r") is None else {
+    fail("Invalid Ryu dependency workspace root")
+  }
+  normalized.replace_all(old=root + "/", new="<workspace>/")
+}
+
+///|
 /// Rejects partial backends and distinguishes one local record from a complete CI run.
 fn validate_records(records : Array[Json], is_local : Bool) -> Unit raise {
   guard records.length() == (if is_local { 1 } else { 3 }) else {
@@ -287,11 +306,15 @@ fn validate_records(records : Array[Json], is_local : Bool) -> Unit raise {
       for
         key in [
           "source_commit", "repository", "run_id", "run_attempt", "run_url", "ported_upstream",
-          "workload_metadata", "comparison_dependencies", "dependency_tree",
+          "workload_metadata", "comparison_dependencies",
         ] {
         guard field(record, key) == field(first, key) else {
           fail("Mixed Ryu snapshots: " + key)
         }
+      }
+      guard canonical_dependency_tree(text(record, "dependency_tree")) ==
+        canonical_dependency_tree(text(first, "dependency_tree")) else {
+        fail("Mixed Ryu snapshots: dependency_tree")
       }
       for key in ["module_manifest", "comparison_manifest"] {
         guard text(record, key).replace_all(old="\r\n", new="\n") ==
@@ -457,6 +480,26 @@ fn changed(value : Json, key : String, replacement : Json) -> Json raise {
 fn fixture() -> Array[Json] {
   let records : Array[Json] = []
   for os in ["linux", "macos", "windows"] {
+    let root = match os {
+      "linux" => "/home/runner/work/moonbit-simd/moonbit-simd"
+      "macos" => "/Users/runner/work/moonbit-simd/moonbit-simd"
+      _ => "D:/a/moonbit-simd/moonbit-simd"
+    }
+    let tree = "justjavac/benchmarks@0.1.0 (local " +
+      root +
+      "/benchmarks) [workspace member]:\n" +
+      "├─ gaato/crc -> gaato/crc@0.1.1\n" +
+      "├─ justjavac/ryu -> justjavac/ryu@0.1.0 (local " +
+      root +
+      "/ryu) [workspace member]\n" +
+      "└─ tonyfettes/utf8 -> tonyfettes/utf8@0.2.4 (local " +
+      root +
+      "/benchmarks/vendor/tonyfettes-utf8) [workspace member]"
+    let tree = if os == "windows" {
+      tree.replace_all(old="/", new="\\").replace_all(old="\n", new="\r\n")
+    } else {
+      tree
+    }
     let backends : Array[Json] = []
     for backend in ["native", "wasm", "wasm-gc", "js"] {
       let summaries : Array[Json] = []
@@ -505,7 +548,7 @@ fn fixture() -> Array[Json] {
       "node": "v24.1.0",
       "module_manifest": "name = \"justjavac/ryu\"\n",
       "comparison_manifest": "justjavac/ryu@0.1.0\n",
-      "dependency_tree": "fixture tree",
+      "dependency_tree": tree,
       "ported_upstream": {
         "package": "ryu",
         "repository": "https://github.com/ulfjack/ryu",
@@ -560,6 +603,24 @@ fn self_test() -> Unit raise {
       ),
       ("run_attempt", Json::string("2")),
       ("dependency_tree", Json::string("changed")),
+      (
+        "dependency_tree",
+        Json::string(
+          text(records[1], "dependency_tree").replace_all(
+            old="gaato/crc@0.1.1",
+            new="gaato/crc@0.1.2",
+          ),
+        ),
+      ),
+      (
+        "dependency_tree",
+        Json::string(
+          text(records[1], "dependency_tree").replace_all(
+            old="benchmarks/vendor/tonyfettes-utf8",
+            new="benchmarks/vendor/other-utf8",
+          ),
+        ),
+      ),
       ("module_manifest", Json::string("name = \"justjavac/ryu\"\nchanged")),
       ("working_tree_dirty", Json::boolean(true)),
       ("ported_upstream", Json::null()),

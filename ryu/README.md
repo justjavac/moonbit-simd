@@ -157,7 +157,9 @@ block. BigInt is used only in generation and independent tests.
 This module does not request or claim SIMD execution: one value's Ryu interval
 and rounding transitions are dependent integer work. It has no CPU feature,
 alignment, endianness, or architecture-specific shortcut. CI configures Windows,
-Linux, and macOS; a local run validates the four backends on Windows. Native
+Linux, and macOS; [CI run 45541274765](https://github.com/justjavac/moonbit-simd/actions/runs/45541274765)
+passed all four backends on all three systems at source
+`a627d01c05f431e39fe4acb15ef956dd694d2d4e`. Native
 builds require a standard C compiler for MoonBit's generated backend/runtime;
 JavaScript tests require Node.js.
 
@@ -194,7 +196,8 @@ Core parsing is independent of the port's tables and decimal-removal logic;
 external Ryu expectations also share upstream's algorithm lineage, so both
 forms of reference are retained.
 
-Local native line coverage is **99.13% (343/346 executable lines)**. The three
+Native line coverage from that CI run is **99.13% (343/346 executable lines)**
+on each of Windows, Linux, and macOS. The three
 unhit locations are defensive zero-shift bodies in the word-window helper and
 the two decimal-to-binary converters; the validated Ryu factors retain at least
 one rounding bit. Table literals have no executable-line counters. No executable
