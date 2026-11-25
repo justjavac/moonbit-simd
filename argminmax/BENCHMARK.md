@@ -1,102 +1,186 @@
 # ArgMinMax performance comparison
 
-The development-only [comparison package](../benchmarks/argminmax) measures
-162 cases per backend against an independent linear MoonBit reference. All
-fourteen numeric kinds use identical prepared values. The Rust source is pinned
-to `argminmax@0.7.1`, revision `f68aba5c251e9dc093f3939c0f9607c942228311`;
-the Rust crate is not timed across languages.
+[CI run 45541959176](https://github.com/justjavac/moonbit-simd/actions/runs/45541959176) | [source 7565184](https://github.com/justjavac/moonbit-simd/commit/756518459ff20334fe71b76c964dc3b73cc878d3) | attempt 1
 
-## Dispatch and measured work
+**Scope:** 3 operating system(s) × 4 backends × 162 cases = **1944 measurements**. Every unrounded distribution and its provenance is preserved in the companion [BENCHMARK-DATA.json](BENCHMARK-DATA.json).
 
-The scalar scan caches extrema values. Automatic searches select it on native,
-Wasm GC, JavaScript, and unmeasured element types. On linear-memory Wasm,
-unmasked, NaN-ignoring `Float` and `Double` searches of at least 4096 elements use vectors.
-Explicit `simd=true` retains portable 8–64-bit vector requests on native/Wasm,
-with short-input, 128-bit, and unsupported-backend scalar fallbacks.
+The port follows `argminmax@0.7.1`, revision `f68aba5c251e9dc093f3939c0f9607c942228311`. The Rust crate is source provenance and is not timed here. The independent MoonBit linear reference and this library consume the same prepared values and return identical indices before timing. Correctness tests additionally use a sort-based oracle and exhaustive IEEE half-float formulas.
 
-This policy follows local Windows probes that measured both implementation
-orders in the same process. Vector assembly must gather typed lanes because
-the current bundled SIMD API does not load contiguous typed array views.
-The complete public operation is measured, including gathers and index
-reduction. Native scalar caching improved this comparison substantially;
-Rust's advertised SIMD ratios do not describe this MoonBit implementation.
-Integer and NaN-propagating vector results varied across the complete corpus,
-so their automatic searches remain scalar. Masked defaults use a direct scalar
-scan and overflow-safe 32-bit byte/bit positioning; this removes repeated
-JavaScript BigInt index arithmetic and per-run result allocation.
+## Timer and dispatch
 
-Cases cover 33 and 4096 elements of all types; empty input; 1,048,576-element
-Int/Double arrays and offset-one views; single extrema; first/last NaNs under
-both policies; dense/sparse/all-null bitmaps with offset three; and narrow index
-boundaries through 131105 elements. Half/wide wrappers and bitmap generation
-are outside timing. Public calls, bitmap validation, callback dispatch,
-single-index result adapters, and `bench.keep` remain inside.
+Typed arrays, half/wide wrappers, and offset-three validity bitmaps are prepared outside the timer. Public calls, bitmap validation, callback dispatch, single-index result adapters, and `bench.keep` are timed. Offset-one cases reuse a partial typed view without materialization. Numeric bytes describe element width; wrapper objects and bitmap storage are additional memory.
 
-Case names record operation/kind, implementation, numeric bytes, and element
-offset. Numeric byte widths are 1/2/4/8/16; wrapper object storage and bitmap
-metadata are additional memory. NaN propagation and all-null cases have
-different read lengths, so their reports use latency without nominal throughput.
+Automatic searches use scalar code, with unmasked NaN-ignoring `argminmax` calls for `Float` and `Double` (at least 4096 elements) using vectors on linear-memory Wasm. The tables explicitly request scalar or SIMD. SIMD requests use gathered typed lanes on native/Wasm, scalar tails, and overflow-bounded indices; 128-bit elements, Wasm GC, and JavaScript use scalar fallback. Masked defaults and scalar-only backends use a direct scalar scan with overflow-safe byte/bit positioning; explicit native/Wasm vector requests use valid runs. Leading NaNs are skipped scalarly.
 
-## Local Windows measurements
+Times are microseconds per invocation; nanoseconds multiply by 1000. **Bold** marks the smallest measured mean; `*` marks CV >= 5% and possible noise. A smaller mean does not establish statistical significance. Compare implementations within the same OS/backend. NaN propagation and all-null inputs can stop early or read only metadata, so these tables report latency rather than nominal throughput.
 
-On 2026-11-25, the complete local run recorded 648 measurements on an Intel
-Core i7-13650HX with the documented nightly toolchain. Its recorded checkout
-was `a39373237b2b2b8ee0d544a9cc9fa0282d2d5854`, with a dirty working tree.
-These are local observations; `*` marks CV >= 5% and possible noise.
+The core runner calibrates for about 100 ms, records ten batch samples, and applies 5% winsorization. Submicrosecond cases use 100000 iterations per batch. Every record preserves `runs`, `batch_size`, quartiles, variance, mean, median, range, commands, UTC timestamps, CPU, toolchain, and dependencies.
 
-| 4096-element workload / backend | Scalar (us) | SIMD request (us) | Linear reference (us) |
+## Measured tradeoffs
+
+For 4096 elements, these ratios divide the SIMD request's mean latency by the scalar mean. Values below 1 favor the SIMD request; the detailed tables mark possible noise.
+
+- **linux:** native Double 0.76x; Wasm Float 0.503x; Wasm Double 0.68x.
+- **macos:** native Double 0.173x; Wasm Float 0.526x; Wasm Double 0.662x.
+- **windows:** native Double 1.452x; Wasm Float 0.501x; Wasm Double 0.727x.
+
+## Runner context
+
+| OS | CPU | Architecture / logical CPUs | Runner / image | Node.js |
+| --- | --- | --- | --- | --- |
+| linux | AMD EPYC 7763 64-Core Processor | x86_64 / 4 | ubuntu-latest / ubuntu26 / 20261116.202.1 | v24.22.3 |
+| macos | Apple M1 (Virtual) | arm64 / 3 | macos-15 / macos15 / 20261118.0550.1 | v24.22.3 |
+| windows | AMD EPYC 7763 64-Core Processor                 | AMD64 / 4 | windows-latest / win25-vs2026 / 20261116.315.1 | v24.22.3 |
+
+## 4096 Int32 elements: latency (us)
+
+| OS / backend | ours scalar | ours SIMD request | linear reference |
 | --- | --- | --- | --- |
-| Float / Wasm | 32.948* | 20.745* | 35.102 |
-| Double / Wasm | 31.898* | 27.791* | 32.950* |
-| Double / native | 41.428* | 107.137* | 162.556* |
-| Double, dense bitmap / JS | 60.204* | 61.520* | 51.273* |
+| linux / native | **3.925** | 4.189 | 6.45 |
+| linux / wasm | 9.058 | **6.205** | 12.918 |
+| linux / wasm-gc | 9.016 | **9.007** | 12.842 |
+| linux / js | **5.21** | 5.234 | 11.597 |
+| macos / native | 5.532 | **2.18*** | 6.775* |
+| macos / wasm | 8.825* | **3.807*** | 10.759* |
+| macos / wasm-gc | **8.594*** | 9.147* | 9.871* |
+| macos / js | **4.957** | 5.16 | 9.859 |
+| windows / native | **4.039** | 5.587 | 6.593 |
+| windows / wasm | 9.218 | **6.309** | 13.291 |
+| windows / wasm-gc | 11.384* | **9.958*** | 15.009* |
+| windows / js | **5.265** | 5.428* | 11.829 |
 
-The generated local report contains all four backends and the full input
-inventory, with unrounded statistics in its companion JSON. The high variation
-supports conservative automatic dispatch; these rows do not establish a
-universal speedup or statistical significance.
+## 4096 Float elements: latency (us)
 
-A separate same-process JavaScript probe compared the previous scalar bitmap
-algorithm with the new direct scan, using identical prepared Double values and
-bitmaps. Both call the same unmasked scalar kernel where required. Public work,
-bitmap validation, callback dispatch, and `bench.keep` are inside timing.
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | 6.502 | **4.519** | 5.143 |
+| linux / wasm | 11.717 | **5.899** | 11.702 |
+| linux / wasm-gc | **9.905** | 9.908 | 11.699 |
+| linux / js | **5.283** | 5.333 | 12.954 |
+| macos / native | 16.676 | **1.941** | 16.37 |
+| macos / wasm | 9.884* | **5.202*** | 8.758 |
+| macos / wasm-gc | 8.62* | **8.163*** | 9.98* |
+| macos / js | 5.869* | **5.78** | 10.39 |
+| windows / native | **5.366** | 5.588 | 7.983 |
+| windows / wasm | 11.919 | **5.976** | 11.904 |
+| windows / wasm-gc | 11.541* | **11.05*** | 12.544* |
+| windows / js | **5.328** | 5.342 | 13.132 |
 
-| Bitmap / measurement order | Previous scan (us) | Direct scan (us) |
-| --- | --- | --- |
-| Dense / previous first | 106.407 | 19.025 |
-| Dense / direct first | 150.683* | 32.440* |
-| Sparse / previous first | 335.437* | 27.506* |
-| Sparse / direct first | 534.783* | 33.185* |
+## 4096 Double elements: latency (us)
 
-The direct scan avoids repeated wide index arithmetic and per-run allocation.
-Both orders favor it on this corpus; variation prevents treating the exact
-ratios as guarantees. The probe's source, raw log, and complete statistics are
-local build artifacts under `_build/argminmax-bitmap-probe/`.
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | 6.462 | **4.911** | 5.147 |
+| linux / wasm | 12.376* | **8.42** | 11.73 |
+| linux / wasm-gc | **9.928** | 9.951 | 11.055 |
+| linux / js | **5.257** | 5.268 | 12.975 |
+| macos / native | 16.451 | **2.841** | 16.359 |
+| macos / wasm | 10.189* | **6.745*** | 9.229* |
+| macos / wasm-gc | **7.461** | 7.752* | 9.422 |
+| macos / js | **5.698** | 5.929 | 10.338 |
+| windows / native | **5.44** | 7.897 | 8.035 |
+| windows / wasm | 11.842 | **8.612** | 11.897 |
+| windows / wasm-gc | **10.067** | 10.077 | 11.308 |
+| windows / js | 5.405 | **5.36** | 13.077 |
 
-## Reproduction and publication
+## 33 Byte elements: latency (ns)
+
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | 65.552 | 265.842 | **63.21** |
+| linux / wasm | **131.655** | 383.945 | 150.449 |
+| linux / wasm-gc | 80.791 | **80.612** | 108.102 |
+| linux / js | **44.358** | 58.12 | 136.518 |
+| macos / native | **56.824*** | 103.418 | 74.887* |
+| macos / wasm | 183.312* | 398.933* | **110.45** |
+| macos / wasm-gc | 101.607* | **68.861*** | 97.765* |
+| macos / js | **38.637** | 67.153* | 100.123 |
+| windows / native | **117.749** | 326.272 | 142.067 |
+| windows / wasm | **152.297*** | 403.651* | 167.537 |
+| windows / wasm-gc | **82.31** | 82.499 | 117.113* |
+| windows / js | **46.874*** | 58.681 | 138.402 |
+
+## 1,048,576 Int32 elements at offset one: latency (us)
+
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | **986.393** | 1067.534 | 1639.729 |
+| linux / wasm | 2294.048 | **1568.776** | 3309.757 |
+| linux / wasm-gc | **2293.572** | 2296.283 | 3283.489 |
+| linux / js | 5568.295 | **4464.889*** | 5240.603 |
+| macos / native | 1412.04 | **505.122** | 1855.795* |
+| macos / wasm | 2394.345* | **1109.156*** | 2454.92* |
+| macos / wasm-gc | 2259.315* | **1973.186*** | 2404.083* |
+| macos / js | 3642.816 | **2348.274** | 3779.746 |
+| windows / native | **995.841** | 1406.401 | 1680.172 |
+| windows / wasm | 2314.221 | **1576.633** | 3362.253 |
+| windows / wasm-gc | 2426.645* | **2350.54** | 3307.489 |
+| windows / js | 5669.906 | **4536.254*** | 5370.113 |
+
+## Dense validity bitmap, 4096 Double elements: latency (us)
+
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | **6.751** | 10.215 | 9.042 |
+| linux / wasm | 16.912 | **15.742** | 19.421 |
+| linux / wasm-gc | 16.864 | 16.837 | **16.819** |
+| linux / js | **21.972** | 22.002 | 22.069* |
+| macos / native | 7.158* | **7.143*** | 17.224 |
+| macos / wasm | 13.259* | **11.316** | 14.223 |
+| macos / wasm-gc | 10.264 | **10.223** | 11.296 |
+| macos / js | 18.124* | 18.435* | **16.362** |
+| windows / native | 10.627 | 13.543 | **10.605** |
+| windows / wasm | 17.3 | **16.033** | 19.629 |
+| windows / wasm-gc | 17.148 | 17.269 | **17.033** |
+| windows / js | 22.313 | 22.368 | **21.24** |
+
+## Last NaN propagation, 4096 Double elements: latency (us)
+
+| OS / backend | ours scalar | ours SIMD request | linear reference |
+| --- | --- | --- | --- |
+| linux / native | 6.463 | **4.728** | 5.182 |
+| linux / wasm | **11.728** | 15.038 | 11.77 |
+| linux / wasm-gc | 9.939 | **9.934** | 11.17 |
+| linux / js | 5.411* | **5.28** | 11.655 |
+| macos / native | 17.384 | **3.671*** | 18.689 |
+| macos / wasm | **8.059** | 13.18* | 9.806* |
+| macos / wasm-gc | 9.201* | **7.192** | 8.603 |
+| macos / js | **6.036** | 6.517* | 11.451 |
+| windows / native | **5.479** | 8.557 | 7.996 |
+| windows / wasm | **11.974** | 15.672 | 12.64* |
+| windows / wasm-gc | **10.221** | 10.232 | 11.264 |
+| windows / js | **5.334** | 5.386 | 11.871 |
+
+## Reproduction and toolchain
 
 ```text
 moon -C benchmarks test argminmax --target all
 moon run scripts/benchmark.mbtx argminmax
 moon run scripts/benchmark_report.mbtx --self-test
-moon run scripts/benchmark_report.mbtx --local argminmax _build/benchmarks/argminmax/windows.json _build/argminmax-report
 ```
 
-The collector runs native, Wasm, Wasm GC, and JavaScript sequentially in release
-mode with `--no-parallelize`. It retains stdout/stderr and structured summaries
-in `_build/benchmarks/argminmax/`. The local renderer requires all four backends
-and writes `LOCAL-BENCHMARK.md` and `LOCAL-BENCHMARK-DATA.json` into the specified
-ignored build directory, preserving their local and dirty-checkout provenance.
+**linux:**
 
-Core times are microseconds per invocation; nanoseconds multiply by 1000.
-Calibration targets about 100 ms, with ten batch samples and 5% winsorization.
-Submicrosecond cases use 100000 iterations per batch. Reports retain every
-unrounded statistic, quartile, sample count, command, timestamp, CPU, toolchain,
-numeric width, and dependency. CV >= 5% marks possible noise; the smallest
-mean alone does not establish significance.
+~~~text
+moon 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moon
+moonc v0.10.22+7b085e9a4-nightly (2026-11-22) ~/.moon/bin/moonc
+moonrun 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moonrun
+~~~
 
-CI is configured for three operating systems by four backends. The collector
-and report validator independently verify the exact 162-case inventory,
-distribution metadata, pinned upstream, and matching source manifests. Published
-snapshots require a complete single CI run and attempt; raw artifacts are retained
-for 90 days. No complete CI snapshot has been selected for this initial port.
+**macos:**
+
+~~~text
+moon 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moon
+moonc v0.10.22+7b085e9a4-nightly (2026-11-22) ~/.moon/bin/moonc
+moonrun 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moonrun
+~~~
+
+**windows:**
+
+~~~text
+moon 0.1.20261120 (aaf8010 2026-11-20) ~\.moon\bin\moon.exe
+moonc v0.10.22+7b085e9a4-nightly (2026-11-22) ~\.moon\bin\moonc.exe
+moonrun 0.1.20261120 (aaf8010 2026-11-20) ~\.moon\bin\moonrun.exe
+~~~
+
+Publish a snapshot from one complete CI run and attempt covering three systems and four backends. Raw artifacts remain available for 90 days. Local outputs retain their local label and dirty-checkout state.

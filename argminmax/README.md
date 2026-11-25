@@ -187,9 +187,11 @@ Windows, Linux, and macOS support `native`, `wasm`, `wasm-gc`, and `js`.
 | Masked search | Direct scalar scan by default, for `simd=false`, and on scalar-only backends; explicit native/Wasm vector requests search valid runs. |
 
 Automatic policy follows local reversed-order measurements of the whole public
-operation. The conservative threshold is a measured dispatch choice, not a
-universal SIMD cutoff. Native portable SIMD remains available explicitly;
-automatic native searches retain the faster measured scalar path. This port
+operation and the complete [CI snapshot](BENCHMARK.md). The 4096-element
+threshold is tied to these workloads. Native portable SIMD remains available
+explicitly; CI shows floating-point vector gains on Linux/macOS and higher
+vector costs on Windows, so the automatic native policy retains a consistent
+scalar default. This port
 does not reproduce Rust's SSE/AVX/AVX512/NEON feature-detection API or promise its
 published speedups. See [BENCHMARK.md](BENCHMARK.md) for actual comparisons.
 
@@ -235,8 +237,9 @@ Masked cases cover every bit offset through 23, partial bitmap views, dense and
 sparse validity, all nulls/NaNs, valid/null NaNs, and overflow-safe validation.
 Checked documentation and private lane/index tests also run in the suite.
 
-The local Windows native export on 2026-11-25 reports **345/352 covered lines
-(98.01%)**. Six uncovered lines belong to automatic vector selection and
+The [native CI exports](https://github.com/justjavac/moonbit-simd/actions/runs/45541951400)
+on 2026-11-25 report **345/352 covered production lines (98.01%)** on Linux,
+macOS, and Windows. Six uncovered lines belong to automatic vector selection and
 scalar-only backend fallbacks; those paths run in the corresponding correctness
 tests. The remaining line guards an unexpected empty result from a custom
 element implementation on a nonempty valid run. Coverage includes production
