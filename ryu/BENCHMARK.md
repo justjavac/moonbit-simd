@@ -1,6 +1,6 @@
 # Ryu formatting and parsing benchmarks
 
-**Local measurements; a selected complete CI snapshot is pending.** Four backends, 85 cases each (340 measurements). Source HEAD `a39373237b2b2b8ee0d544a9cc9fa0282d2d5854`; working tree dirty: `true`. CPU: 13th Gen Intel(R) Core(TM) i7-13650HX.
+Complete three-OS/four-backend CI snapshot, 85 cases each (1020 measurements): [run](https://github.com/justjavac/moonbit-simd/actions/runs/45543134882), attempt 1, measured source `3ea16e8da66153646e4288b317f80db6278be9d8`.
 
 All latencies are **nanoseconds per public invocation**. `*` marks CV >= 5% and possible noise. Compare within one OS/backend; a lower mean alone does not establish statistical significance.
 
@@ -10,10 +10,18 @@ Cells show **Ryu / core adapted**. The core formatter's conversion to the exact 
 
 | OS/backend | Double 0.3 | Float 0.3 | Parse Double pi | Parse Float pi |
 | --- | --- | --- | --- | --- |
-| windows/native | 1087.567* / 3367.676* | 2196.558* / 7007.275* | 773.31 / 966.382 | 523.273* / 769.736* |
-| windows/wasm | 465.075 / 889.278 | 1412.568* / 6739.734* | 528.108* / 743.077* | 390.243* / 718.885* |
-| windows/wasm-gc | 101.551 / 227.56* | 295.285* / 798.933* | 237.832 / 419.809* | 140.015* / 285.932* |
-| windows/js | 1091.318 / 278.944* | 891.271* / 1340.147* | 2049.338* / 1262.616* | 918.599* / 1134.398* |
+| linux/native | 199.904 / 357.841 | 127.153 / 348.374 | 76.564 / 92.697 | 47.524 / 76.826 |
+| linux/wasm | 604.381 / 1175.085 | 359.517 / 1167.056 | 214.418 / 307.729 | 138.07 / 302.544 |
+| linux/wasm-gc | 136.422 / 349.919 | 102.846 / 292.369 | 85.745 / 150.568 | 63.408 / 113.83 |
+| linux/js | 1475.671 / 299.799 | 334.215 / 576.997 | 579.836 / 263.929 | 199.511 / 187.313 |
+| macos/native | 213.211* / 468.048* | 91.443* / 365.551* | 86.901* / 81.264* | 74.26* / 52.372 |
+| macos/wasm | 513.654 / 1069.724* | 498.731* / 1346.574* | 256.839* / 490.434* | 104.409* / 301.506* |
+| macos/wasm-gc | 102.819* / 271.292* | 71.805 / 201.482* | 76.171* / 147.658* | 47.892 / 74.013* |
+| macos/js | 1081.328* / 211.147* | 346.243* / 481.581* | 544.2* / 286.107* | 219.596* / 170.146* |
+| windows/native | 656.578 / 1050.628 | 369.385 / 1033.342 | 252.475 / 302.767 | 155.732 / 290.165 |
+| windows/wasm | 628.5 / 1180.852 | 345.244 / 1157.5 | 189.828 / 312.447 | 156.067 / 300.376* |
+| windows/wasm-gc | 170.617* / 354.71 | 111.295 / 315.028 | 102.921* / 157.622* | 63.043 / 109.119* |
+| windows/js | 1509.019 / 287.112 | 368.642 / 548.138 | 693.354* / 398.63* | 220.005 / 225.028* |
 
 ## Ryu Printf
 
@@ -21,10 +29,18 @@ Core has no equivalent fixed/scientific precision API in the validated toolchain
 
 | OS/backend | Fixed 1.25, p=6 | Fixed smallest subnormal, p=1074 | Scientific 1.25, p=6 | Scientific 1.25, p=1000 |
 | --- | --- | --- | --- | --- |
-| windows/native | 3288.896* | 61633.417* | 3333.412* | 18122.221* |
-| windows/wasm | 1741.123* | 42933.597* | 1808.483 | 26740.648 |
-| windows/wasm-gc | 478.66* | 17848.816* | 526.47* | 11810.065 |
-| windows/js | 4200.595* | 159795.579* | 4054.471* | 39532.365 |
+| linux/native | 267.265 | 7077.757 | 278.769 | 3211.914 |
+| linux/wasm | 716.627 | 17824.749 | 792.693 | 9525.054 |
+| linux/wasm-gc | 173.682 | 6547.96 | 191.052 | 3743.966 |
+| linux/js | 1372.652 | 59594.15 | 1472.538 | 13985.08 |
+| macos/native | 202.213* | 6721.021* | 219.28* | 3801.602 |
+| macos/wasm | 841.82* | 23276.813* | 857.56* | 14163.619* |
+| macos/wasm-gc | 144.405* | 8782.903* | 164.337* | 5538.053* |
+| macos/js | 1126.904* | 64707.522* | 1385.478* | 19552.977* |
+| windows/native | 815.453 | 18121.827 | 833.218 | 6796.82 |
+| windows/wasm | 720.867 | 18028.301 | 800.911 | 9694 |
+| windows/wasm-gc | 203.972 | 6952.296 | 219.003 | 4261.58 |
+| windows/js | 1471.786 | 61517.675 | 1516.215 | 14372.265 |
 
 ## Method and limits
 
@@ -53,8 +69,8 @@ Publish only one complete CI snapshot with matching source, run, attempt, manife
 Toolchain:
 
 ```text
-moon 0.1.20261120 (aaf8010 2026-11-20) D:\App\.moon\bin\moon.exe
-moonc v0.10.22+7b085e9a4-nightly (2026-11-22) D:\App\.moon\bin\moonc.exe
-moonrun 0.1.20261120 (aaf8010 2026-11-20) D:\App\.moon\bin\moonrun.exe
-v24.1.0
+moon 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moon
+moonc v0.10.22+7b085e9a4-nightly (2026-11-22) ~/.moon/bin/moonc
+moonrun 0.1.20261120 (aaf8010 2026-11-20) ~/.moon/bin/moonrun
+v24.22.3
 ```

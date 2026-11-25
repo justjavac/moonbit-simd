@@ -156,10 +156,10 @@ block. BigInt is used only in generation and independent tests.
 `native`, `wasm`, `wasm-gc`, and `js` use the same portable scalar algorithm.
 This module does not request or claim SIMD execution: one value's Ryu interval
 and rounding transitions are dependent integer work. It has no CPU feature,
-alignment, endianness, or architecture-specific shortcut. CI configures Windows,
-Linux, and macOS; [CI run 45541274765](https://github.com/justjavac/moonbit-simd/actions/runs/45541274765)
-passed all four backends on all three systems at source
-`a627d01c05f431e39fe4acb15ef956dd694d2d4e`. Native
+alignment, endianness, or architecture-specific shortcut.
+[CI run 45543103598](https://github.com/justjavac/moonbit-simd/actions/runs/45543103598)
+passed all four backends on Windows, Linux, and macOS at source
+`3ea16e8da66153646e4288b317f80db6278be9d8`. Native
 builds require a standard C compiler for MoonBit's generated backend/runtime;
 JavaScript tests require Node.js.
 
