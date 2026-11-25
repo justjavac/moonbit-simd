@@ -1,0 +1,9 @@
+import {
+  "justjavac/uuid" @ours,
+  "bobzhang/uuidm" @bob,
+  "f4ah6o/uuidm" @fork,
+  "moonbitstack/moonuuid" @stack,
+  "wulisususu/moonuuid" @wuli,
+  "moonbitlang/core/bench",
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"

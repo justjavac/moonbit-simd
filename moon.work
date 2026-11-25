@@ -3,4 +3,5 @@ members = [
   "./url",
   "./base64",
   "./atoi",
+  "./uuid",
 ]

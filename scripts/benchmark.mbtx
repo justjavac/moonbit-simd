@@ -5,6 +5,7 @@ import {
   "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/string",
 }
 ----
 
@@ -281,6 +282,159 @@ fn annotate_base64(records : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Defines every UUID operation, spelling, implementation, length, and offset.
+fn expected_uuid_names() -> Map[String, Unit] {
+  let names : Map[String, Unit] = Map([])
+  let implementations = [
+    "own-scalar", "own-simd", "bobzhang", "f4ah6o", "moonbitstack", "wulisususu",
+  ]
+  for
+    (label, length) in [
+      ("simple", 32),
+      ("hyphenated", 36),
+      ("mixed", 36),
+      ("nil", 36),
+      ("max", 36),
+      ("braced", 38),
+      ("urn", 45),
+    ] {
+    let offsets = if label == "simple" || label == "hyphenated" {
+      [0, 1]
+    } else {
+      [0]
+    }
+    for implementation in implementations {
+      if label == "braced" &&
+        (implementation == "bobzhang" || implementation == "f4ah6o") {
+        continue
+      }
+      for offset in offsets {
+        for operation in ["parse", "roundtrip"] {
+          names["\{operation}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for implementation in implementations {
+    names["format-hyphenated:\{implementation}:16:0"] = ()
+    if implementation != "wulisususu" {
+      names["format-simple:\{implementation}:16:0"] = ()
+    }
+    for
+      (label, length) in [
+        ("empty", 0),
+        ("short", 31),
+        ("start", 36),
+        ("end", 36),
+      ] {
+      names["invalid-\{label}:\{implementation}:\{length}:0"] = ()
+    }
+    for
+      (operation, length) in [
+        ("parse", 36864),
+        ("roundtrip", 36864),
+        ("format", 16384),
+      ] {
+      names["\{operation}-batch1024:\{implementation}:\{length}:0"] = ()
+    }
+  }
+  for implementation in ["own-scalar", "own-simd"] {
+    for spelling in ["simple", "hyphenated"] {
+      names["format-\{spelling}-upper:\{implementation}:16:0"] = ()
+      for case in ["lower", "upper"] {
+        for offset in [0, 1] {
+          names["write-\{spelling}-\{case}:\{implementation}:16:\{offset}"] = ()
+        }
+      }
+    }
+    for
+      (label, length) in [
+        ("simple", 32),
+        ("hyphenated", 36),
+        ("braced", 38),
+        ("urn", 45),
+      ] {
+      for offset in [0, 1] {
+        names["parse-bytes-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+      }
+    }
+  }
+  names
+}
+
+///|
+/// Rejects missing or substituted UUID cases before accepting their measurements.
+fn validate_uuid_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_uuid_names()
+  guard expected.length() == 193 && records.length() == expected.length() else {
+    fail("Expected exactly 193 UUID cases")
+  }
+  for record in records {
+    match record {
+      { "name": String(name), .. } => {
+        guard expected.contains(name) else {
+          fail("Unexpected UUID benchmark: \{name}")
+        }
+        let _ = expected.remove(name)
+      }
+      _ => fail("Missing UUID case name")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete UUID inventory") }
+}
+
+///|
+/// Records exact input and output lengths, UUID counts, and offset units per case.
+fn add_uuid_metadata(records : Array[Json]) -> Unit raise {
+  for record in records {
+    guard record is Object(fields) && fields.get("name") is Some(String(name)) else {
+      fail("Missing UUID summary object")
+    }
+    let pieces = name.split(":").map(view => view.to_owned()).to_array()
+    guard pieces.length() == 4 else { fail("Invalid UUID case name") }
+    let operation = pieces[0]
+    let length = @string.parse_int(pieces[2])
+    let offset = @string.parse_int(pieces[3])
+    let count = if operation.find("batch1024") is Some(_) { 1024 } else { 1 }
+    let writing = operation.find("write-") is Some(0)
+    let byte_input = operation.find("parse-bytes-") is Some(0)
+    let text_input = !byte_input &&
+      (
+        operation.find("parse-") is Some(0) ||
+        operation.find("roundtrip-") is Some(0) ||
+        operation.find("invalid-") is Some(0)
+      )
+    let output = if operation.find("invalid-") is Some(0) {
+      0
+    } else if operation.find("simple") is Some(_) &&
+      (operation.find("format-") is Some(0) || writing) {
+      32 * count
+    } else if operation.find("roundtrip-") is Some(0) ||
+      operation.find("format-") is Some(0) ||
+      writing {
+      36 * count
+    } else {
+      16 * count
+    }
+    fields["input_bytes"] = Json(length)
+    fields["input_code_units"] = if text_input { Json(length) } else { null }
+    fields["uuid_count"] = Json(count)
+    fields["output_bytes"] = Json(output)
+    fields["input_offset"] = Json(if writing { 0 } else { offset })
+    fields["output_offset"] = Json(if writing { offset } else { 0 })
+    fields["offset_unit"] = Json(
+      if writing {
+        "output-bytes"
+      } else if text_input {
+        "utf16-code-units"
+      } else {
+        "input-bytes"
+      },
+    )
+  }
+}
+
+///|
 /// Defines the exact integer workloads, byte counts, variants, and view offsets.
 fn expected_atoi_names() -> Map[String, Unit] {
   let expected : Map[String, Unit] = Map([])
@@ -373,14 +527,21 @@ async fn main {
   let requested = if arguments.length() >= 2 {
     arguments[1:].to_owned()
   } else {
-    match environment("BENCHMARK_SCOPE") {
-      "all" => ["crc32", "url", "base64", "atoi"]
-      "base64" => ["base64"]
-      "atoi" => ["atoi"]
-      "crc32" => ["crc32"]
-      "url" => ["url"]
-      _ => fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+    let scope = environment("BENCHMARK_SCOPE")
+    let selector = if scope == "" {
+      environment("BENCHMARK_MODULE")
+    } else {
+      scope
     }
+    guard selector != "" else {
+      fail("Usage: moon run scripts/benchmark.mbtx <module>... | all")
+    }
+    [selector]
+  }
+  let selected_modules = if requested == ["all"] {
+    ["crc32", "url", "base64", "atoi", "uuid"]
+  } else {
+    requested
   }
   let os = operating_system()
   let cpu = cpu_metadata(os)
@@ -400,7 +561,7 @@ async fn main {
   } else {
     "https://github.com/\{repository}/actions/runs/\{run_id}"
   }
-  for package_dir in requested {
+  for package_dir in selected_modules {
     guard package_dir != "" &&
       package_dir != "." &&
       package_dir != ".." &&
@@ -421,7 +582,12 @@ async fn main {
       guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
         fail("Unsupported benchmark backend")
       }
-      let command = if package_dir == "url" {
+      let command = if package_dir == "uuid" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/uuid",
+        ]
+      } else if package_dir == "url" {
         [
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/url/own", "-p", "justjavac/benchmarks/url/tonyfettes",
@@ -461,6 +627,10 @@ async fn main {
         )
       }
       let records = summaries(output.stdout())
+      if package_dir == "uuid" {
+        validate_uuid_inventory(records)
+        add_uuid_metadata(records)
+      }
       if package_dir == "atoi" {
         validate_atoi_inventory(records)
       }
@@ -540,7 +710,38 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "base64" {
+      "comparison_dependencies": if package_dir == "uuid" {
+        [
+          {
+            "label": "bobzhang",
+            "package": "bobzhang/uuidm",
+            "version": "0.2.0",
+            "license": "ISC",
+            "api": "from_string/from_urn(String), Uuid::to_string/to_string_simple",
+          },
+          {
+            "label": "f4ah6o",
+            "package": "f4ah6o/uuidm",
+            "version": "0.2.1",
+            "license": "ISC",
+            "api": "from_string/from_urn(String), Uuid::to_string/to_string_simple; bobzhang fork",
+          },
+          {
+            "label": "moonbitstack",
+            "package": "moonbitstack/moonuuid",
+            "version": "0.2.1",
+            "license": "Apache-2.0",
+            "api": "parse(StringView), Uuid::to_string/hex",
+          },
+          {
+            "label": "wulisususu",
+            "package": "wulisususu/moonuuid",
+            "version": "0.1.0",
+            "license": "Apache-2.0",
+            "api": "parse_permissive(String), to_string; no compact formatter",
+          },
+        ]
+      } else if package_dir == "base64" {
         [
           {
             "label": "core",
