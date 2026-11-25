@@ -1,7 +1,7 @@
 # Development benchmarks
 
 This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
-UTF-8, Base64, and decimal integer comparison adapters. Its nested workspace
+UTF-8, Base64, decimal integer, and UUID comparison adapters. Its nested workspace
 links the local libraries while keeping third-party dependencies out of the
 published libraries.
 
@@ -73,6 +73,25 @@ Run `moon run scripts/benchmark.mbtx base64`. Results are recorded in
 [base64/BENCHMARK.md](../base64/BENCHMARK.md), with every statistic and complete
 CI provenance in its companion JSON. Workflow dispatch can select Base64 alone;
 each selected module still requires the full three-OS/four-backend matrix.
+
+## UUID
+
+UUID results are recorded in [uuid/BENCHMARK.md](../uuid/BENCHMARK.md).
+The `uuid/` package compares `bobzhang/uuidm@0.2.0`, `f4ah6o/uuidm@0.2.1`,
+`moonbitstack/moonuuid@0.2.1`, and `wulisususu/moonuuid@0.1.0` against our scalar
+and SIMD requests. All adapters validate independent binary values and canonical
+results before timing. The 193-case inventory covers individual and 1024-UUID
+batch parsing, canonical roundtrips, prepared-value formatting, rejected input,
+partial string views, and our arbitrary-byte and reusable-buffer APIs.
+Required view-to-String conversion and public API adaptation remain inside the
+timer. Unsupported braced parsing in bobzhang/f4ah6o and compact formatting in
+wulisususu are omitted explicitly; f4ah6o is a bobzhang fork.
+
+Run `moon run scripts/benchmark.mbtx uuid` for local measurements, or select
+`uuid` in the Benchmarks workflow to collect all twelve OS/backend environments.
+Use `moon run scripts/benchmark.mbtx all` to measure every integrated library.
+
+## Decimal integers
 
 The [integer adapters](atoi) compare the six-operation decimal port's scalar and
 SIMD requests with core string parsers and BigInt restricted to the same 128-bit
