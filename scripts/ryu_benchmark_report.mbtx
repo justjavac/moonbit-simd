@@ -1,0 +1,664 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+----
+
+///|
+/// Retrieves one required schema field without silently substituting a default.
+fn field(value : Json, key : String) -> Json raise {
+  guard value is Object(values) && values.get(key) is Some(result) else {
+    fail("Missing Ryu field: " + key)
+  }
+  result
+}
+
+///|
+/// Retrieves a required string from a benchmark record.
+fn text(value : Json, key : String) -> String raise {
+  guard field(value, key) is String(result) else {
+    fail("Expected a string: " + key)
+  }
+  result
+}
+
+///|
+/// Retrieves a finite numeric statistic or metadata value.
+fn number(value : Json, key : String) -> Double raise {
+  guard field(value, key) is Number(result, ..) && result.is_finite() else {
+    fail("Expected a finite number: " + key)
+  }
+  result
+}
+
+///|
+/// Retrieves a required JSON array from the collector schema.
+fn array(value : Json, key : String) -> Array[Json] raise {
+  guard field(value, key) is Array(result) else {
+    fail("Expected an array: " + key)
+  }
+  result
+}
+
+///|
+/// Defines the independent report-side inventory of all 85 public operations.
+fn expected_names() -> Map[String, Unit] {
+  let names : Map[String, Unit] = Map([])
+  for
+    (labels, bytes) in [
+      (
+        [
+          "d2s-zero", "d2s-short", "d2s-pi", "d2s-smallint", "d2s-subnormal", "d2s-max",
+          "d2s-small", "d2s-large",
+        ],
+        8,
+      ),
+      (["f2s-zero", "f2s-short", "f2s-pi", "f2s-subnormal", "f2s-max"], 4),
+    ] {
+    for label in labels {
+      for implementation in ["own", "core"] {
+        names["\{label}:\{implementation}:\{bytes}:0"] = ()
+      }
+    }
+  }
+  for kind in ["fixed", "exp"] {
+    for precision in [0, 6, 17, 100, 1000] {
+      names["\{kind}-short-\{precision}:own:8:0"] = ()
+    }
+  }
+  for
+    label in [
+      "fixed-subnormal-324", "fixed-subnormal-1074", "fixed-large-0", "fixed-large-6",
+      "fixed-carry-2", "exp-subnormal-6", "exp-subnormal-324", "exp-large-6", "exp-carry-1",
+    ] {
+    names["\{label}:own:8:0"] = ()
+  }
+  for
+    (label, bytes, offsets) in [
+      ("s2d-short", 17, [0]),
+      ("s2d-integer", 16, [0]),
+      ("s2d-subnormal", 23, [0]),
+      ("s2d-max", 22, [0]),
+      ("s2d-offset", 6, [0, 1, 3, 15]),
+      ("s2d-invalid", 4, [0]),
+      ("s2d-zeroes", 81, [0]),
+      ("s2f-short", 9, [0]),
+      ("s2f-integer", 8, [0]),
+      ("s2f-subnormal", 14, [0]),
+      ("s2f-max", 13, [0]),
+      ("s2f-offset", 6, [0, 1, 3, 15]),
+      ("s2f-invalid", 4, [0]),
+      ("s2f-zeroes", 73, [0]),
+    ] {
+    for implementation in ["own", "core"] {
+      for offset in offsets {
+        names["\{label}:\{implementation}:\{bytes}:\{offset}"] = ()
+      }
+    }
+  }
+  names
+}
+
+///|
+/// Validates the exact names and every unrounded distribution statistic.
+fn validate_backend(value : Json) -> Unit raise {
+  let backend = text(value, "backend")
+  guard ["native", "wasm", "wasm-gc", "js"].contains(backend) &&
+    text(value, "time_unit") == "microseconds" &&
+    text(value, "command") ==
+    "moon -C benchmarks bench --target " +
+    backend +
+    " --release --no-parallelize -p justjavac/benchmarks/ryu" else {
+    fail("Unexpected Ryu backend, time unit, or release command")
+  }
+  for key in ["started_at_utc", "finished_at_utc"] {
+    let timestamp = text(value, key)
+    guard timestamp.length() == 20 &&
+      timestamp[10] == 'T' &&
+      timestamp.has_suffix("Z") else {
+      fail("Missing Ryu UTC timestamp")
+    }
+  }
+  guard text(value, "finished_at_utc") >= text(value, "started_at_utc") else {
+    fail("Reversed Ryu timestamps")
+  }
+  let expected = expected_names()
+  let summaries = array(value, "summaries")
+  guard summaries.length() == 85 else {
+    fail("Expected 85 Ryu benchmark cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected or duplicate Ryu case: " + name)
+    }
+    let _ = expected.remove(name)
+    let mean = number(summary, "mean")
+    let minimum = number(summary, "min")
+    let maximum = number(summary, "max")
+    let median = number(summary, "median")
+    let tolerance = maximum.abs() * 0.000000000001 + 0.000000000001
+    guard mean > 0 &&
+      minimum >= 0 &&
+      minimum <= mean + tolerance &&
+      mean <= maximum + tolerance &&
+      minimum <= median + tolerance &&
+      median <= maximum + tolerance else {
+      fail("Invalid Ryu timing range")
+    }
+    let quartiles = array(summary, "quartiles")
+    guard quartiles is [Number(low, ..), Number(middle, ..), Number(high, ..)] &&
+      low.is_finite() &&
+      middle.is_finite() &&
+      high.is_finite() &&
+      minimum <= low + tolerance &&
+      low <= middle + tolerance &&
+      middle <= high + tolerance &&
+      high <= maximum + tolerance &&
+      (median - middle).abs() <= tolerance else {
+      fail("Invalid Ryu quartile range")
+    }
+    for
+      key in [
+        "std_dev", "std_dev_pct", "variance", "sum", "median_abs_dev", "median_abs_dev_pct",
+        "iqr",
+      ] {
+      guard number(summary, key) >= 0 else {
+        fail("Invalid Ryu dispersion statistic")
+      }
+    }
+    let batch = number(summary, "batch_size")
+    guard number(summary, "runs") == 10 &&
+      batch >= 1 &&
+      batch.floor() == batch &&
+      (number(summary, "sum") - mean * 10).abs() <= tolerance * 10 &&
+      (number(summary, "iqr") - (high - low)).abs() <= tolerance else {
+      fail("Invalid Ryu sample metadata or aggregate statistic")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete Ryu case inventory") }
+}
+
+///|
+/// Verifies pinned upstream identity and both required core adapter descriptions.
+fn validate_metadata(record : Json) -> Unit raise {
+  guard text(record, "module") == "justjavac/ryu" &&
+    text(record, "module_manifest").find("justjavac/ryu") is Some(_) &&
+    text(record, "comparison_manifest").find("justjavac/ryu@0.1.0") is Some(_) &&
+    text(field(record, "cpu"), "model") != "" &&
+    text(record, "toolchain") != "" &&
+    text(record, "node") != "" else {
+    fail("Missing Ryu source, dependency, CPU, or toolchain metadata")
+  }
+  let upstream = field(record, "ported_upstream")
+  guard text(upstream, "package") == "ryu" &&
+    text(upstream, "repository") == "https://github.com/ulfjack/ryu" &&
+    text(upstream, "revision") == "4c0618b0e44f7ef027ebae05d2cc7812048f7c8f" &&
+    text(upstream, "license") == "BSL-1.0" &&
+    field(upstream, "timed") == Json::boolean(false) else {
+    fail("Missing or changed Ryu upstream provenance")
+  }
+  let dependencies = array(record, "comparison_dependencies")
+  guard dependencies.length() == 2 else {
+    fail("Missing Ryu core comparison adapters")
+  }
+  let names : Map[String, Unit] = Map([])
+  for dependency in dependencies {
+    let name = text(dependency, "label")
+    guard !names.contains(name) &&
+      text(dependency, "version") != "" &&
+      text(dependency, "license") == "Apache-2.0" else {
+      fail("Missing or duplicate Ryu core dependency")
+    }
+    names[name] = ()
+    match name {
+      "core-format" => {
+        guard text(dependency, "package") == "moonbitlang/core/builtin" &&
+          text(dependency, "api").find("Double/Float.to_string") is Some(_) else {
+          fail("Changed shortest-format adapter")
+        }
+      }
+      "core-parse" => {
+        guard text(dependency, "package") == "moonbitlang/core/string" &&
+          text(dependency, "api").find("parse_double") is Some(_) else {
+          fail("Changed decimal-parse adapter")
+        }
+      }
+      _ => fail("Unexpected Ryu comparison dependency")
+    }
+  }
+  let workloads = field(record, "workload_metadata")
+  guard number(workloads, "cases_per_backend") == 85 &&
+    field(workloads, "simd") == Json::boolean(false) &&
+    field(workloads, "format_input_widths") ==
+    ({ "Double": 8, "Float": 4 } : Json) &&
+    field(workloads, "parse_offsets") == ([0, 1, 3, 15] : Json) else {
+    fail("Changed Ryu workloads or execution mode")
+  }
+}
+
+///|
+/// Rejects partial backends and distinguishes one local record from a complete CI run.
+fn validate_records(records : Array[Json], is_local : Bool) -> Unit raise {
+  guard records.length() == (if is_local { 1 } else { 3 }) else {
+    fail("Missing Ryu operating-system records")
+  }
+  let first = records[0]
+  let systems : Map[String, Unit] = Map([])
+  for record in records {
+    validate_metadata(record)
+    let os = text(record, "os")
+    guard ["linux", "macos", "windows"].contains(os) && !systems.contains(os) else {
+      fail("Duplicate or unknown Ryu OS")
+    }
+    systems[os] = ()
+    if is_local {
+      guard text(record, "source") == "local" &&
+        text(record, "run_id") == "" &&
+        text(record, "run_url") == "" &&
+        text(record, "run_attempt") == "" else {
+        fail("Expected an explicitly local Ryu artifact")
+      }
+    } else {
+      let commit = text(record, "source_commit")
+      let run = text(record, "run_id")
+      guard text(record, "source") == "github-actions" &&
+        commit.length() == 40 &&
+        run != "" &&
+        @string.parse_int(text(record, "run_attempt")) > 0 &&
+        text(record, "repository") != "" &&
+        text(record, "run_url") ==
+        "https://github.com/" +
+        text(record, "repository") +
+        "/actions/runs/" +
+        run &&
+        field(record, "working_tree_dirty") == Json::boolean(false) else {
+        fail("Missing Ryu CI provenance")
+      }
+      for c in commit {
+        guard (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') else {
+          fail("Invalid Ryu commit hash")
+        }
+      }
+      for
+        key in [
+          "source_commit", "repository", "run_id", "run_attempt", "run_url", "ported_upstream",
+          "workload_metadata", "comparison_dependencies", "dependency_tree",
+        ] {
+        guard field(record, key) == field(first, key) else {
+          fail("Mixed Ryu snapshots: " + key)
+        }
+      }
+      for key in ["module_manifest", "comparison_manifest"] {
+        guard text(record, key).replace_all(old="\r\n", new="\n") ==
+          text(first, key).replace_all(old="\r\n", new="\n") else {
+          fail("Mixed Ryu source manifests")
+        }
+      }
+    }
+    let backends = array(record, "backends")
+    guard backends.length() == 4 else {
+      fail("Ryu reports require all four backends")
+    }
+    let targets : Map[String, Unit] = Map([])
+    for backend in backends {
+      let name = text(backend, "backend")
+      guard !targets.contains(name) else { fail("Duplicate Ryu backend") }
+      targets[name] = ()
+      validate_backend(backend)
+    }
+  }
+}
+
+///|
+/// Escapes runner metadata before placing it in Markdown tables.
+fn cell(value : String) -> String {
+  value
+  .replace_all(old="|", new="\\|")
+  .replace_all(old="\r", new=" ")
+  .replace_all(old="\n", new=" ")
+}
+
+///|
+/// Converts microseconds to displayed nanoseconds without altering saved JSON.
+fn latency(summary : Json) -> String raise {
+  let value = (number(summary, "mean") * 1000000).round() / 1000
+  value.to_string() +
+  (if number(summary, "std_dev_pct") >= 5 { "*" } else { "" })
+}
+
+///|
+/// Writes representative rows while preserving every case in the accompanying JSON.
+fn table(
+  builder : StringBuilder,
+  records : Array[Json],
+  rows : Array[(String, Int32)],
+  compare : Bool,
+) -> Unit raise {
+  for record in records {
+    for backend in array(record, "backends") {
+      let summaries : Map[String, Json] = Map([])
+      for summary in array(backend, "summaries") {
+        summaries[text(summary, "name")] = summary
+      }
+      builder.write_string(
+        "| " + cell(text(record, "os")) + "/" + text(backend, "backend"),
+      )
+      for (workload, bytes) in rows {
+        builder.write_string(
+          " | " + latency(summaries["\{workload}:own:\{bytes}:0"]),
+        )
+        if compare {
+          builder.write_string(
+            " / " + latency(summaries["\{workload}:core:\{bytes}:0"]),
+          )
+        }
+      }
+      builder.write_string(" |\n")
+    }
+  }
+}
+
+///|
+/// Renders a concise Ryu-specific report with explicit local or CI provenance.
+fn report(records : Array[Json], is_local : Bool) -> String raise {
+  validate_records(records, is_local)
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# Ryu formatting and parsing benchmarks\n\n")
+  if is_local {
+    builder.write_string(
+      "**Local measurements; a selected complete CI snapshot is pending.** Four backends, 85 cases each (340 measurements). Source HEAD `" +
+      text(first, "source_commit") +
+      "`; working tree dirty: `" +
+      field(first, "working_tree_dirty").stringify() +
+      "`. CPU: " +
+      cell(text(field(first, "cpu"), "model")) +
+      ".\n\n",
+    )
+  } else {
+    builder.write_string(
+      "Complete three-OS/four-backend CI snapshot, 85 cases each (1020 measurements): [run](" +
+      text(first, "run_url") +
+      "), attempt " +
+      text(first, "run_attempt") +
+      ", measured source `" +
+      text(first, "source_commit") +
+      "`.\n\n",
+    )
+  }
+  builder.write_string(
+    "All latencies are **nanoseconds per public invocation**. `*` marks CV >= 5% and possible noise. Compare within one OS/backend; a lower mean alone does not establish statistical significance.\n\n## Shortest formatting and parsing\n\nCells show **Ryu / core adapted**. The core formatter's conversion to the exact Ryu scientific layout and negative-zero sign is included.\n\n| OS/backend | Double 0.3 | Float 0.3 | Parse Double pi | Parse Float pi |\n| --- | --- | --- | --- | --- |\n",
+  )
+  table(
+    builder,
+    records,
+    [("d2s-short", 8), ("f2s-short", 4), ("s2d-short", 17), ("s2f-short", 9)],
+    true,
+  )
+  builder.write_string(
+    "\n## Ryu Printf\n\nCore has no equivalent fixed/scientific precision API in the validated toolchain, so these rows measure the port alone.\n\n| OS/backend | Fixed 1.25, p=6 | Fixed smallest subnormal, p=1074 | Scientific 1.25, p=6 | Scientific 1.25, p=1000 |\n| --- | --- | --- | --- | --- |\n",
+  )
+  table(
+    builder,
+    records,
+    [
+      ("fixed-short-6", 8),
+      ("fixed-subnormal-1074", 8),
+      ("exp-short-6", 8),
+      ("exp-short-1000", 8),
+    ],
+    false,
+  )
+  builder.write_string(
+    "\n## Method and limits\n\n- Production code uses portable scalar integer Ryu on every backend; these measurements make no SIMD claim.\n- Prepared numeric values, Float construction, ASCII strings, and offset backing strings are outside timing. Public calls, returned-string allocation, core layout/narrowing adapters, optional-bit results, callback dispatch, and `bench.keep` are timed.\n- Core shortest Float formatting uses original Float precision. Core has no direct Float parser here; parsing includes its required Double-to-Float narrowing. All measured parse bits match independent expected values, but that adapter does not establish equivalent rounding for every possible decimal.\n- The 85-case inventory includes source precision, negative zero, subnormals, maximum finite values, integer shortcuts, carries, malformed parse input, leading zeroes, offsets 1/3/15, and Printf precision through 1074. Input widths are 8/4 bytes for numeric values; parser inputs are ASCII, so byte counts equal UTF-16 code units. No byte-stream throughput is reported.\n- Release mode and `--no-parallelize`; four backends run sequentially. Core calibrates around 100 ms and takes 10 batch samples with 5% winsorization. Submicrosecond cases use 100000 calls per batch; every unrounded statistic and batch size is retained in the JSON.\n- Upstream C is a correctness reference at `4c0618b0e44f7ef027ebae05d2cc7812048f7c8f` under BSL-1.0. It is not timed across languages.\n\n## Reproduction and dependencies\n\n| Adapter package | Version | License |\n| --- | --- | --- |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| " +
+      cell(text(dependency, "package")) +
+      " | " +
+      cell(text(dependency, "version")) +
+      " | " +
+      cell(text(dependency, "license")) +
+      " |\n",
+    )
+  }
+  builder.write_string(
+    "\n```text\nmoon -C benchmarks test ryu --target all\nmoon run scripts/benchmark.mbtx ryu\nmoon run scripts/benchmark_report.mbtx --local ryu _build/benchmarks/ryu/windows.json _build/ryu-report\n```\n\nPublish only one complete CI snapshot with matching source, run, attempt, manifests, dependencies, workloads, and all three systems/four backends. Local data stays explicitly local. Raw CI artifacts are retained for 90 days; local raw logs and full collector JSON are in ignored `_build/benchmarks/ryu/`. The selected `BENCHMARK-DATA.json` is added only after complete CI validation.\n",
+  )
+  builder.write_string(
+    "\nToolchain:\n\n```text\n" +
+    text(first, "toolchain").trim().to_owned() +
+    "\n" +
+    text(first, "node") +
+    "\n```\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Replaces one fixture field while preserving the other schema entries.
+fn changed(value : Json, key : String, replacement : Json) -> Json raise {
+  guard value is Object(values) else { fail("Expected a fixture object") }
+  let result : Map[String, Json] = Map([])
+  for (name, original) in values {
+    result[name] = if name == key { replacement } else { original }
+  }
+  Json::object(result)
+}
+
+///|
+/// Constructs a complete synthetic CI matrix for independent validator regressions.
+fn fixture() -> Array[Json] {
+  let records : Array[Json] = []
+  for os in ["linux", "macos", "windows"] {
+    let backends : Array[Json] = []
+    for backend in ["native", "wasm", "wasm-gc", "js"] {
+      let summaries : Array[Json] = []
+      for (name, _) in expected_names() {
+        summaries.push({
+          "name": name,
+          "mean": 1.0,
+          "min": 0.9,
+          "max": 1.1,
+          "median": 1.0,
+          "std_dev": 0.1,
+          "std_dev_pct": 10,
+          "variance": 0.01,
+          "sum": 10,
+          "median_abs_dev": 0.1,
+          "median_abs_dev_pct": 10,
+          "iqr": 0.1,
+          "quartiles": [0.95, 1.0, 1.05],
+          "runs": 10,
+          "batch_size": 100000,
+        })
+      }
+      backends.push({
+        "backend": backend,
+        "time_unit": "microseconds",
+        "command": "moon -C benchmarks bench --target " +
+        backend +
+        " --release --no-parallelize -p justjavac/benchmarks/ryu",
+        "started_at_utc": "2026-11-25T00:00:00Z",
+        "finished_at_utc": "2026-11-25T00:01:00Z",
+        "summaries": Json(summaries),
+      })
+    }
+    records.push({
+      "module": "justjavac/ryu",
+      "source": "github-actions",
+      "os": os,
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repository": "justjavac/moonbit-simd",
+      "run_id": "123",
+      "run_attempt": "1",
+      "run_url": "https://github.com/justjavac/moonbit-simd/actions/runs/123",
+      "working_tree_dirty": false,
+      "cpu": { "model": "fixture CPU" },
+      "toolchain": "fixture compiler",
+      "node": "v24.1.0",
+      "module_manifest": "name = \"justjavac/ryu\"\n",
+      "comparison_manifest": "justjavac/ryu@0.1.0\n",
+      "dependency_tree": "fixture tree",
+      "ported_upstream": {
+        "package": "ryu",
+        "repository": "https://github.com/ulfjack/ryu",
+        "revision": "4c0618b0e44f7ef027ebae05d2cc7812048f7c8f",
+        "license": "BSL-1.0",
+        "timed": false,
+      },
+      "comparison_dependencies": [
+        {
+          "label": "core-format",
+          "package": "moonbitlang/core/builtin",
+          "version": "fixture core",
+          "license": "Apache-2.0",
+          "api": "Double/Float.to_string with layout conversion",
+        },
+        {
+          "label": "core-parse",
+          "package": "moonbitlang/core/string",
+          "version": "fixture core",
+          "license": "Apache-2.0",
+          "api": "parse_double with Float narrowing",
+        },
+      ],
+      "workload_metadata": {
+        "cases_per_backend": 85,
+        "simd": false,
+        "format_input_widths": { "Double": 8, "Float": 4 },
+        "parse_offsets": [0, 1, 3, 15],
+      },
+      "backends": Json(backends),
+    })
+  }
+  records
+}
+
+///|
+/// Proves malformed cases, statistics, revisions, attempts, and partial matrices fail.
+fn self_test() -> Unit raise {
+  assert_eq(expected_names().length(), 85)
+  let records = fixture()
+  validate_records(records, false)
+  assert_true(
+    report(records, false).has_prefix("# Ryu formatting and parsing benchmarks"),
+  )
+  assert_eq(latency({ "mean": 1.25, "std_dev_pct": 4.9 }), "1250")
+  assert_eq(latency({ "mean": 1.25, "std_dev_pct": 5.0 }), "1250*")
+  for
+    (key, replacement) in [
+      (
+        "source_commit",
+        Json::string("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+      ),
+      ("run_attempt", Json::string("2")),
+      ("dependency_tree", Json::string("changed")),
+      ("module_manifest", Json::string("name = \"justjavac/ryu\"\nchanged")),
+      ("working_tree_dirty", Json::boolean(true)),
+      ("ported_upstream", Json::null()),
+    ] {
+    let bad = records.copy()
+    bad[1] = changed(bad[1], key, replacement)
+    try validate_records(bad, false) catch {
+      _ => ()
+    } noraise {
+      _ => fail("A mixed or malformed Ryu snapshot must fail")
+    }
+  }
+  try validate_records(records[:2].to_owned(), false) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Partial Ryu systems must fail")
+  }
+  let backend = array(records[0], "backends")[0]
+  let summaries = array(backend, "summaries")
+  for
+    (key, replacement) in [
+      ("name", Json::string("s2d-offset:own:7:15")),
+      ("batch_size", Json::number(1.5)),
+      ("runs", Json::number(9)),
+      ("mean", Json::number(0)),
+      ("variance", Json::number(-1)),
+      ("quartiles", ([1.05, 1.0, 0.95] : Json)),
+    ] {
+    let cases = summaries.copy()
+    cases[0] = changed(cases[0], key, replacement)
+    try validate_backend(changed(backend, "summaries", Json(cases))) catch {
+      _ => ()
+    } noraise {
+      _ => fail("A substituted Ryu case or invalid statistic must fail")
+    }
+  }
+  let duplicated = summaries.copy()
+  duplicated[0] = duplicated[1]
+  try validate_backend(changed(backend, "summaries", Json(duplicated))) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Duplicate Ryu cases must fail")
+  }
+  let partial = changed(
+    records[0],
+    "backends",
+    Json(array(records[0], "backends")[:3].to_owned()),
+  )
+  let local_record = changed(
+    changed(
+      changed(
+        changed(partial, "source", Json::string("local")),
+        "run_id",
+        Json::string(""),
+      ),
+      "run_url",
+      Json::string(""),
+    ),
+    "run_attempt",
+    Json::string(""),
+  )
+  try validate_records([local_record], true) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Partial local Ryu backends must fail")
+  }
+}
+
+///|
+/// Writes only verified complete CI or explicitly LOCAL-named report artifacts.
+async fn main {
+  let args = @env.args()
+  if args.length() == 2 && args[1] == "--self-test" {
+    self_test()
+    println("Ryu benchmark report self-test passed")
+    return
+  }
+  let is_local = args.length() == 4 && args[1] == "--local"
+  guard is_local || args.length() == 3 else {
+    fail(
+      "Usage: moon run scripts/ryu_benchmark_report.mbtx <module input directory> <output directory> | --local <collector JSON> <output directory>",
+    )
+  }
+  let records : Array[Json] = []
+  if is_local {
+    records.push(@json.parse(@fs.read_text(args[2])))
+  } else {
+    for os in ["linux", "macos", "windows"] {
+      records.push(@json.parse(@fs.read_text(args[1] + "/" + os + ".json")))
+    }
+  }
+  let directory = if is_local { args[3] } else { args[2] }
+  let markdown = report(records, is_local)
+  @fs.mkdir(directory, recursive=true, allow_existing=true)
+  let prefix = if is_local { "LOCAL-" } else { "" }
+  @fs.write_text(directory + "/" + prefix + "BENCHMARK.md", markdown)
+  @fs.write_text(
+    directory + "/" + prefix + "BENCHMARK-DATA.json",
+    Json(records).stringify(indent=2),
+  )
+  println("Generated " + prefix + "Ryu report in " + directory)
+}

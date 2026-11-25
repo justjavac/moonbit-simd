@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/ryu"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn d2exp(Double, precision~ : Int32) -> String raise FormatError
+
+pub fn d2fixed(Double, precision~ : Int32) -> String raise FormatError
+
+pub fn d2s(Double) -> String
+
+pub fn f2s(Float) -> String
+
+pub fn s2d(StringView) -> Double raise ParseError
+
+pub fn s2f(StringView) -> Float raise ParseError
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror FormatError {
+  InvalidPrecision(Int32)
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) suberror ParseError {
+  InputTooShort
+  InputTooLong
+  MalformedInput
+}
+
+// Types and methods
+
+// Type aliases
+
+// Traits

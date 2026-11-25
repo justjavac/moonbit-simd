@@ -1,0 +1,7 @@
+import {
+  "justjavac/ryu" @ours,
+  "moonbitlang/core/bench",
+  "moonbitlang/core/string",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

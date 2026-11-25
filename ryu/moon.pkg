@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/core/string",
+  "moonbitlang/core/json",
+  "moonbitlang/core/bigint",
+} for "test"
+
+import {
+  "moonbitlang/core/bigint",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

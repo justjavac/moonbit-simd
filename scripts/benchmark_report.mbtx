@@ -2,6 +2,7 @@
 import {
   "moonbitlang/core/async",
   "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -2886,15 +2887,31 @@ fn atoi_snapshot_fixture(statistics : Json) -> Array[Json] raise {
 }
 
 ///|
+/// Runs the independent Ryu validator without mixing its case inventory with other modules.
+async fn ryu_report(arguments : Array[String]) -> Unit {
+  let output = @shell.Cmd(
+    "moon",
+    ["run", "scripts/ryu_benchmark_report.mbtx"] + arguments,
+  ).output(max_output_bytes=2097152)
+  guard output.exit_code() == 0 else { fail(output.stdout() + output.stderr()) }
+  println(output.stdout().trim())
+}
+
+///|
 /// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
 async fn main {
   let arguments = @env.args()
   if arguments.length() == 2 && arguments[1] == "--self-test" {
     self_test()
+    ryu_report(["--self-test"])
     println("Benchmark report self-test passed")
     return
   }
   if arguments.length() == 5 && arguments[1] == "--local" {
+    if arguments[2] == "ryu" {
+      ryu_report(["--local", arguments[3], arguments[4]])
+      return
+    }
     guard ["atoi", "utf8"].contains(arguments[2]) else {
       fail("Local rendering supports integer and UTF-8 artifacts")
     }
@@ -2933,6 +2950,10 @@ async fn main {
       package_dir.find("/") is None &&
       package_dir.find("\\") is None else {
       fail("Invalid module directory")
+    }
+    if package_dir == "ryu" {
+      ryu_report([input + "/ryu", output + "/ryu"])
+      continue
     }
     let records : Array[Json] = []
     for os in ["linux", "macos", "windows"] {

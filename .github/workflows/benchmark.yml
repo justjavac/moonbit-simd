@@ -15,6 +15,7 @@ on:
           - url
           - utf8
           - uuid
+          - ryu
   push:
     branches: [main]
     paths:

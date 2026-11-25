@@ -1,0 +1,221 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/bigint",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+----
+
+///|
+/// Pins the upstream data independently of a moving branch name.
+let revision = "4c0618b0e44f7ef027ebae05d2cc7812048f7c8f"
+
+///|
+/// Extracts unsigned decimal entries from one named upstream C array.
+fn entries(
+  source : String,
+  name : String,
+  count : Int32,
+) -> Array[UInt64] raise {
+  let start = source.find(name + "[").unwrap()
+  let declaration = source[start:]
+  let body_start = declaration.find("= {").unwrap() + 3
+  let body_end = declaration.find("};").unwrap()
+  let body = declaration[body_start:body_end]
+  let values : Array[UInt64] = []
+  let token = StringBuilder()
+  for c in body {
+    if c >= '0' && c <= '9' {
+      token.write_char(c)
+    } else if !token.is_empty() {
+      values.push(@string.parse_uint64(token.to_string()))
+      token.reset()
+    }
+  }
+  if !token.is_empty() {
+    values.push(@string.parse_uint64(token.to_string()))
+  }
+  guard values.length() == count else {
+    fail("Unexpected upstream table size: " + name)
+  }
+  values
+}
+
+///|
+/// Applies a signed bit shift without depending on negative-shift conventions.
+fn shift(value : @bigint.BigInt, bits : Int32) -> @bigint.BigInt {
+  if bits >= 0 {
+    value << bits
+  } else {
+    value >> -bits
+  }
+}
+
+///|
+/// Checks a complete normalized integer against its little-endian 64-bit limbs.
+fn verify(
+  value : @bigint.BigInt,
+  data : Array[UInt64],
+  index : Int32,
+  limbs : Int32,
+) -> Unit raise {
+  let mask = (@bigint.BigInt::from_int(1) << 64) - 1
+  for limb in 0..<limbs {
+    assert_eq(
+      ((value >> (limb * 64)) & mask).to_uint64(),
+      data[index * limbs + limb],
+    )
+  }
+  assert_eq(value >> (limbs * 64), @bigint.BigInt::from_int(0))
+}
+
+///|
+/// Verifies every shortest multiplier from exact powers and integer reciprocals.
+fn verify_shortest(
+  inverse : Array[UInt64],
+  powers : Array[UInt64],
+) -> Unit raise {
+  let one = @bigint.BigInt::from_int(1)
+  let mut power = one
+  for i in 0..<342 {
+    let bits = power.bit_length()
+    verify((one << (bits - 1 + 125)) / power + 1, inverse, i, 2)
+    if i < 326 {
+      verify(shift(power, 125 - bits), powers, i, 2)
+    }
+    power = power * 5
+  }
+}
+
+///|
+/// Verifies both Printf table families with their exact integer formulas.
+fn verify_printf(
+  offsets : Array[UInt64],
+  powers : Array[UInt64],
+  fractional_offsets : Array[UInt64],
+  minimum_blocks : Array[UInt64],
+  fractions : Array[UInt64],
+) -> Unit raise {
+  let one = @bigint.BigInt::from_int(1)
+  let billion = @bigint.BigInt::from_int(1000000000)
+  let modulus = billion << 136
+  let mut index = 0
+  for group in 0..<64 {
+    assert_eq(offsets[group].to_int(), index)
+    let length = (((16 * group * 78913) >> 18) + 25) / 9
+    let mut divisor = one
+    for _ in 0..<length {
+      verify(
+        ((one << (16 * group + 120)) / divisor + 1) % modulus,
+        powers,
+        index,
+        3,
+      )
+      divisor = divisor * billion
+      index += 1
+    }
+  }
+  assert_eq(index, 1224)
+  index = 0
+  for group in 0..<68 {
+    assert_eq(fractional_offsets[group].to_int(), index)
+    let mut minimum = -1
+    let mut power = billion
+    for block = 0; ; block = block + 1 {
+      let value = shift(power, 120 - 16 * group) % modulus
+      if minimum < 0 && value << 62 >> 128 == 0 {
+        power = power * billion
+        continue
+      }
+      if minimum < 0 {
+        minimum = block
+        assert_eq(minimum_blocks[group].to_int(), minimum)
+      }
+      if value == 0 {
+        break
+      }
+      verify(value, fractions, index, 3)
+      index += 1
+      power = power * billion
+    }
+  }
+  assert_eq(index, 3133)
+  assert_eq(fractional_offsets[68].to_int(), index)
+  assert_eq(minimum_blocks[68], 0UL)
+}
+
+///|
+/// Emits flat immutable-by-convention tables without per-entry tuple allocations.
+fn emit(
+  builder : StringBuilder,
+  name : String,
+  data : Array[UInt64],
+  limbs : Int32,
+) -> Unit {
+  builder.write_string(
+    "\n///|\n/// Stores verified upstream multipliers or block offsets.\n",
+  )
+  builder.write_string(
+    "let " +
+    name +
+    " : FixedArray[" +
+    (if limbs == 1 { "Int" } else { "UInt64" }) +
+    "] = [\n",
+  )
+  for i in 0..<data.length() {
+    if i % limbs == 0 {
+      builder.write_string("  ")
+    }
+    builder.write_string(data[i].to_string())
+    builder.write_string(if limbs == 1 { "," } else { "UL," })
+    builder.write_string(if (i + 1) % limbs == 0 { "\n" } else { " " })
+  }
+  builder.write_string("]\n")
+}
+
+///|
+/// Regenerates portable MoonBit tables only after validating revision and formulas.
+async fn main {
+  let args = @env.args()
+  let root = if args.length() == 2 { args[1] } else { "_build/ryu-upstream" }
+  guard args.length() <= 2 else {
+    fail("Usage: moon run scripts/ryu_tables.mbtx [upstream checkout]")
+  }
+  let checked = @shell.Cmd("git", ["-C", root, "rev-parse", "HEAD"]).output()
+  checked.check()
+  assert_eq(checked.stdout().trim().to_owned(), revision)
+  let shortest_source = @fs.read_text(root + "/ryu/d2s_full_table.h")
+  let printf_source = @fs.read_text(root + "/ryu/d2fixed_full_table.h")
+  let inverse = entries(shortest_source, "DOUBLE_POW5_INV_SPLIT", 684)
+  let powers = entries(shortest_source, "DOUBLE_POW5_SPLIT", 652)
+  let offsets = entries(printf_source, "POW10_OFFSET", 64)
+  let integer_powers = entries(printf_source, "POW10_SPLIT", 3672)
+  let fractional_offsets = entries(printf_source, "POW10_OFFSET_2", 69)
+  let minimum_blocks = entries(printf_source, "MIN_BLOCK_2", 69)
+  let fractions = entries(printf_source, "POW10_SPLIT_2", 9399)
+  verify_shortest(inverse, powers)
+  verify_printf(
+    offsets, integer_powers, fractional_offsets, minimum_blocks, fractions,
+  )
+  let header = "// Copyright 2018 Ulf Adams. Port copyright 2026 justjavac.\n// Derived from Ryu under the Boost Software License 1.0; see LICENSE.\n// Generated by scripts/ryu_tables.mbtx from upstream " +
+    revision +
+    ".\n"
+  let shortest = StringBuilder()
+  shortest.write_string(header)
+  emit(shortest, "double_pow5_inverse", inverse, 2)
+  emit(shortest, "double_pow5", powers, 2)
+  let printf = StringBuilder()
+  printf.write_string(header)
+  emit(printf, "pow10_offsets", offsets, 1)
+  emit(printf, "pow10_multipliers", integer_powers, 3)
+  emit(printf, "fractional_offsets", fractional_offsets, 1)
+  emit(printf, "minimum_fractional_blocks", minimum_blocks, 1)
+  emit(printf, "fractional_multipliers", fractions, 3)
+  @fs.mkdir("ryu", allow_existing=true)
+  @fs.write_text("ryu/shortest_tables.mbt", shortest.to_string())
+  @fs.write_text("ryu/printf_tables.mbt", printf.to_string())
+  println("Verified and generated all 5025 Ryu table entries")
+}

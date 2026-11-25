@@ -23,6 +23,8 @@ library modules.
 | `justjavac/atoi` | Decimal byte-to-integer parsing, exact prefixes, and 8–128-bit ranges, ported from atoi_simd | [Guide](atoi/README.md) · [Examples](atoi/README.mbt.md) | [BENCHMARK.md](atoi/BENCHMARK.md) |
 | `justjavac/uuid` | UUID text/byte parsing, formatting, and reusable output buffers, ported from uuid-simd | [Guide](uuid/README.md) · [Examples](uuid/README.mbt.md) | [BENCHMARK.md](uuid/BENCHMARK.md) |
 
+| `justjavac/ryu` | Shortest Float/Double decimals, fixed/scientific formatting, and experimental parsing, ported from Ryu | [Guide](ryu/README.md) · [Examples](ryu/README.mbt.md) | [BENCHMARK.md](ryu/BENCHMARK.md) |
+
 Follow each guide for installation, API usage, and release availability. New
 libraries are added as sibling modules at the repository root.
 
@@ -61,7 +63,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi uuid
+moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi uuid ryu
 ```
 
 ## Benchmarks
@@ -101,6 +103,7 @@ moon run scripts/benchmark.mbtx utf8
 moon run scripts/benchmark.mbtx base64
 moon run scripts/benchmark.mbtx atoi
 moon run scripts/benchmark.mbtx uuid
+moon run scripts/benchmark.mbtx ryu
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as

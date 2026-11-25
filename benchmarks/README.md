@@ -1,7 +1,26 @@
 # Development benchmarks
 
+The [Ryu adapters](ryu) compare shortest Float/Double formatting and decimal
+parsing with bundled core public APIs. Core's conversion to the exact Ryu
+scientific layout and its required Float parse narrowing stay inside timing.
+The measured corpus has identical strings or independently specified IEEE bits.
+Core has no equivalent fixed/scientific precision API here, so Ryu Printf is
+measured separately. This port uses the same scalar integer algorithm on all
+backends and makes no SIMD claim.
+
+There are 85 Ryu cases per backend, including precision through 1074, carries,
+non-normal values, signed zero, leading zeroes, invalid input, and offsets
+1/3/15. Prepared values and views stay outside timing; public allocation,
+adaptation, callback dispatch, and `bench.keep` are timed. Run
+`moon -C benchmarks test ryu --target all`, then
+`moon run scripts/benchmark.mbtx ryu`. Collection and the independent
+[Ryu report validator](../scripts/ryu_benchmark_report.mbtx) check the exact
+inventory and source/run/attempt/dependency identity. Explicit local rendering
+uses `moon run scripts/benchmark_report.mbtx --local ryu _build/benchmarks/ryu/windows.json _build/ryu-report`.
+
+
 This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
-UTF-8, Base64, decimal integer, and UUID comparison adapters. Its nested workspace
+UTF-8, Base64, decimal integer, UUID, and Ryu comparison adapters. Its nested workspace
 links the local libraries while keeping third-party dependencies out of the
 published libraries.
 

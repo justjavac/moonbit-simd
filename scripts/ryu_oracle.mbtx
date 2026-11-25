@@ -1,0 +1,363 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+----
+
+///|
+/// Fixes the C reference source and imported fixture revision.
+let revision = "4c0618b0e44f7ef027ebae05d2cc7812048f7c8f"
+
+///|
+/// Captures a checked external command and retains its full diagnostic log.
+async fn capture(command : @shell.Cmd, log : String) -> String {
+  let output = command.output(max_output_bytes=33554432)
+  @fs.write_text(log, output.stdout() + output.stderr())
+  output.check()
+  output.stdout()
+}
+
+///|
+/// Retains upstream expected-value macros and their platform literal conditionals.
+fn calls(source : String, macro_name : String, replacement : String) -> String {
+  let result = StringBuilder()
+  let lines = source.split("\n").to_array()
+  let mut i = 0
+  while i < lines.length() {
+    let line = lines[i].trim()
+    if line.has_prefix("#if") ||
+      line.has_prefix("#else") ||
+      line.has_prefix("#endif") {
+      result.write_stringview(line)
+      result.write_char('\n')
+    } else if line.has_prefix(macro_name + "(") {
+      let call = StringBuilder()
+      call.write_stringview(line)
+      while call.to_string().find(");") is None {
+        i += 1
+        call.write_char('\n')
+        call.write_stringview(lines[i])
+      }
+      let text = call.to_string()
+      // Complete expected tables are emitted separately with their original fields.
+      if text.find(".value") is None {
+        result.write_string(
+          text.replace(old=macro_name + "(", new=replacement + "("),
+        )
+        result.write_char('\n')
+      }
+    }
+    i += 1
+  }
+  result.to_string()
+}
+
+///|
+/// Implements a standalone C oracle without linking any C into the MoonBit library.
+let driver : String =
+  #|#include <assert.h>
+  #|#include <float.h>
+  #|#include <stdio.h>
+  #|#include <stdlib.h>
+  #|#include <string.h>
+  #|#include "ryu/ryu.h"
+  #|#include "ryu/ryu_parse.h"
+  #|static unsigned long long double_bits(double value) {
+  #|  unsigned long long bits; memcpy(&bits, &value, 8); return bits;
+  #|}
+  #|static unsigned int float_bits(float value) {
+  #|  unsigned int bits; memcpy(&bits, &value, 4); return bits;
+  #|}
+  #|static float int32Bits2Float(unsigned int bits) {
+  #|  float value; memcpy(&value, &bits, 4); return value;
+  #|}
+  #|static void check(const char* expected, const char* observed) {
+  #|  if (strcmp(expected, observed)) {
+  #|    fprintf(stderr, "Expected %s; observed %s\n", expected, observed); exit(2);
+  #|  }
+  #|}
+  #|static void emit_short_double(const char* expected, double value) {
+  #|  char text[32]; d2s_buffered(value, text); check(expected, text);
+  #|  printf("D\t%016llx\t0\t%s\n", double_bits(value), expected);
+  #|}
+  #|static void emit_short_float(const char* expected, float value) {
+  #|  char text[32]; f2s_buffered(value, text); check(expected, text);
+  #|  printf("F\t%08x\t0\t%s\n", float_bits(value), expected);
+  #|}
+  #|static void emit_fixed(double value, unsigned int precision, const char* expected) {
+  #|  char text[4096]; d2fixed_buffered(value, precision, text); check(expected, text);
+  #|  printf("X\t%016llx\t%u\t%s\n", double_bits(value), precision, expected);
+  #|}
+  #|static void emit_exp(double value, unsigned int precision, const char* expected) {
+  #|  char text[4096]; d2exp_buffered(value, precision, text); check(expected, text);
+  #|  printf("E\t%016llx\t%u\t%s\n", double_bits(value), precision, expected);
+  #|}
+  #|static void emit_parse_double(double expected, const char* input) {
+  #|  double observed; if (s2d(input, &observed) != SUCCESS || double_bits(expected) != double_bits(observed)) exit(3);
+  #|  printf("P\t%016llx\t0\t%s\n", double_bits(expected), input);
+  #|}
+  #|static void emit_parse_float(float expected, const char* input) {
+  #|  float observed; if (s2f(input, &observed) != SUCCESS || float_bits(expected) != float_bits(observed)) exit(3);
+  #|  printf("Q\t%08x\t0\t%s\n", float_bits(expected), input);
+  #|}
+  #|static void emit_random(void) {
+  #|  unsigned long long state = 0x5259555f4f524143ULL;
+  #|  const unsigned int precisions[] = {0, 1, 2, 8, 9, 10, 17, 18, 50, 1074};
+  #|  for (int i = 0; i < 4000; ++i) {
+  #|    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+  #|    double value; memcpy(&value, &state, 8);
+  #|    unsigned int float_word = (unsigned int)(state >> 32);
+  #|    float single = int32Bits2Float(float_word);
+  #|    char text[4096];
+  #|    d2s_buffered(value, text);
+  #|    printf("D\t%016llx\t0\t%s\n", state, text);
+  #|    f2s_buffered(single, text);
+  #|    printf("F\t%08x\t0\t%s\n", float_word, text);
+  #|    if (i < 64 && ((state >> 52) & 2047) != 2047) {
+  #|      for (unsigned int p : precisions) {
+  #|        d2fixed_buffered(value, p, text);
+  #|        printf("X\t%016llx\t%u\t%s\n", state, p, text);
+  #|        d2exp_buffered(value, p, text);
+  #|        printf("E\t%016llx\t%u\t%s\n", state, p, text);
+  #|      }
+  #|    }
+  #|    char input[64];
+  #|    snprintf(input, sizeof(input), "%lluE%+d", state % 100000000000000000ULL, i % 700 - 350);
+  #|    double parsed;
+  #|    if (s2d(input, &parsed) != SUCCESS) exit(4);
+  #|    printf("P\t%016llx\t0\t%s\n", double_bits(parsed), input);
+  #|    snprintf(input, sizeof(input), "%uE%+d", float_word % 1000000000U, i % 130 - 65);
+  #|    float parsed_single;
+  #|    if (s2f(input, &parsed_single) != SUCCESS) exit(4);
+  #|    printf("Q\t%08x\t0\t%s\n", float_bits(parsed_single), input);
+  #|  }
+  #|}
+
+///|
+/// Builds the external oracle with explicit programs, paths, and argument arrays.
+async fn compile(
+  root : String,
+  directory : String,
+  source : String,
+  executable : String,
+) -> Unit {
+  let implementations = ["d2s", "f2s", "d2fixed", "s2d", "s2f"]
+  if @env.get_env_var("OS").unwrap_or("") == "Windows_NT" {
+    let program_files = @env.get_env_var("ProgramFiles(x86)").unwrap()
+    let installation = capture(
+        @shell.Cmd(
+          program_files + "/Microsoft Visual Studio/Installer/vswhere.exe",
+          [
+            "-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property", "installationPath",
+          ],
+        ),
+        directory + "/compiler-discovery.log",
+      )
+      .trim()
+      .to_owned()
+    let versions = @fs.readdir(installation + "/VC/Tools/MSVC", sort=true)
+    let toolchain = installation +
+      "/VC/Tools/MSVC/" +
+      versions[versions.length() - 1]
+    let sdk = program_files + "/Windows Kits/10"
+    let sdk_versions = @fs.readdir(sdk + "/Include", sort=true)
+    let sdk_version = sdk_versions[sdk_versions.length() - 1]
+    let binary = toolchain + "/bin/Hostx64/x64/"
+    let compiler = binary + "cl.exe"
+    let compiler_env = {
+      "PATH": binary + ";" + @env.get_env_var("PATH").unwrap_or(""),
+    }
+    let common = [
+      "/nologo",
+      "/O2",
+      "/D_CRT_SECURE_NO_WARNINGS",
+      "/I" + root,
+      "/I" + toolchain + "/include",
+      "/I" + sdk + "/Include/" + sdk_version + "/ucrt",
+    ]
+    let objects : Array[String] = []
+    for name in implementations {
+      let object = directory + "/" + name + ".obj"
+      let arguments = common.copy()
+      arguments.append([
+        "/c",
+        "/TC",
+        root + "/ryu/" + name + ".c",
+        "/Fo" + object,
+      ])
+      ignore(
+        capture(
+          @shell.Cmd(compiler, arguments, env=compiler_env),
+          directory + "/build-" + name + ".log",
+        ),
+      )
+      objects.push(object)
+    }
+    let arguments = common.copy()
+    arguments.append([
+      "/EHsc",
+      "/std:c++17",
+      source,
+      "/Fo" + directory + "/driver.obj",
+      "/Fe" + executable,
+    ])
+    arguments.append(objects)
+    arguments.append([
+      "/link",
+      "/LIBPATH:" + toolchain + "/lib/x64",
+      "/LIBPATH:" + sdk + "/Lib/" + sdk_version + "/ucrt/x64",
+      "/LIBPATH:" + sdk + "/Lib/" + sdk_version + "/um/x64",
+    ])
+    ignore(
+      capture(
+        @shell.Cmd(compiler, arguments, env=compiler_env),
+        directory + "/build-driver.log",
+      ),
+    )
+  } else {
+    let arguments = ["-O2", "-std=c++11", "-I", root, source]
+    for name in implementations {
+      arguments.push(root + "/ryu/" + name + ".c")
+    }
+    arguments.append(["-o", executable])
+    ignore(capture(@shell.Cmd("c++", arguments), directory + "/build.log"))
+  }
+}
+
+///|
+/// Generates complete compact JSON records while retaining exact expected strings.
+async fn fixture(output : String, filename : String, binding : String) -> Unit {
+  let builder = StringBuilder()
+  builder.write_string(
+    "// Copyright 2018-2019 Ulf Adams. Port copyright 2026 justjavac.\n// Upstream fixtures use the Boost Software License 1.0; see LICENSE.\n// Generated by scripts/ryu_oracle.mbtx at upstream " +
+    revision +
+    ".\n\n///|\n/// Stores exact expected outputs and input bits from the pinned C reference.\nlet " +
+    binding +
+    " : String =\n  #|[\n",
+  )
+  let counts : Map[String, Int32] = Map([])
+  let lines = output.trim().split("\n").to_array()
+  for i in 0..<lines.length() {
+    let fields = lines[i]
+      .trim()
+      .split("\t")
+      .map(part => part.to_owned())
+      .to_array()
+    guard fields.length() == 4 &&
+      ["D", "F", "X", "E", "P", "Q"].contains(fields[0]) else {
+      fail("Malformed C oracle record")
+    }
+    let precision = @string.parse_int(fields[2])
+    let record : Json = [fields[0], fields[1], precision, fields[3]]
+    builder.write_string(
+      "  #|  " +
+      record.stringify() +
+      (if i + 1 < lines.length() { ",\n" } else { "\n" }),
+    )
+    counts[fields[0]] = counts.get(fields[0]).unwrap_or(0) + 1
+  }
+  builder.write_string("  #|]\n")
+  @fs.write_text("ryu/" + filename, builder.to_string())
+  for (name, count) in counts {
+    println(filename + " " + name + ": " + count.to_string())
+  }
+}
+
+///|
+/// Selects complete operation families without changing any record contents.
+fn selected(output : String, modes : Array[String]) -> String {
+  let builder = StringBuilder()
+  for line in output.split("\n") {
+    if !line.is_empty() && modes.contains(line[:1].to_owned()) {
+      builder.write_stringview(line)
+      builder.write_char('\n')
+    }
+  }
+  builder.to_string()
+}
+
+///|
+/// Reproduces complete upstream vectors and deterministic external differential data.
+async fn main {
+  let args = @env.args()
+  guard args.length() <= 2 else {
+    fail("Usage: moon run scripts/ryu_oracle.mbtx [upstream checkout]")
+  }
+  let checkout = if args.length() == 2 {
+    args[1]
+  } else {
+    "_build/ryu-upstream"
+  }
+  let root = @fs.realpath(checkout)
+  let checked = @shell.Cmd("git", ["-C", root, "rev-parse", "HEAD"]).output()
+  checked.check()
+  assert_eq(checked.stdout().trim().to_owned(), revision)
+  @fs.mkdir("_build/ryu-oracle", recursive=true, allow_existing=true)
+  let directory = @fs.realpath("_build/ryu-oracle")
+  let source = directory + "/driver.cpp"
+  let executable = directory +
+    (if @env.get_env_var("OS").unwrap_or("") == "Windows_NT" {
+      "/oracle.exe"
+    } else {
+      "/oracle"
+    })
+  let original = @fs.read_text(root + "/ryu/tests/d2fixed_test.cc")
+  let prefix_end = original.find("#define EXPECT_FIXED").unwrap()
+  let prefix = original[:prefix_end]
+    .to_owned()
+    .replace(old="#include \"third_party/gtest/gtest.h\"", new="")
+  let code = StringBuilder()
+  code.write_string(driver)
+  code.write_string(prefix)
+  code.write_string(
+    "\nstatic void emit_vectors(void) {\nconst uint64_t maxMantissa = (1ULL << 53) - 1;\n",
+  )
+  for
+    (name, macro_name, replacement) in [
+      ("d2s_test.cc", "ASSERT_D2S", "emit_short_double"),
+      ("f2s_test.cc", "ASSERT_F2S", "emit_short_float"),
+      ("s2d_test.cc", "EXPECT_S2D", "emit_parse_double"),
+      ("s2f_test.cc", "EXPECT_S2F", "emit_parse_float"),
+    ] {
+    code.write_string(
+      calls(@fs.read_text(root + "/ryu/tests/" + name), macro_name, replacement),
+    )
+  }
+  code.write_string(calls(original, "EXPECT_FIXED", "emit_fixed"))
+  code.write_string(calls(original, "EXPECT_EXP", "emit_exp"))
+  for array_name in ["all_powers_of_ten", "all_binary_exponents"] {
+    code.write_string(
+      "\nfor (const test_case& item : " +
+      array_name +
+      ") {\nemit_fixed(item.value, item.fixed_precision, item.fixed_string);\nemit_exp(item.value, item.exp_precision, item.exp_string);\n}\n",
+    )
+  }
+  code.write_string(
+    "}\nint main(int argc, char** argv) {\nif (argc == 2 && !strcmp(argv[1], \"random\")) emit_random(); else emit_vectors();\nreturn 0;\n}\n",
+  )
+  @fs.write_text(source, code.to_string())
+  compile(root, directory, source, executable)
+  let vectors = capture(
+    @shell.Cmd(executable, ["vectors"]),
+    directory + "/upstream.log",
+  )
+  fixture(vectors, "upstream_data_test.mbt", "upstream_vectors")
+  let random = capture(
+    @shell.Cmd(executable, ["random"]),
+    directory + "/random.log",
+  )
+  for
+    (filename, binding, modes) in [
+      ("oracle_shortest_data_test.mbt", "oracle_shortest_vectors", ["D", "F"]),
+      ("oracle_printf_data_test.mbt", "oracle_printf_vectors", ["X", "E"]),
+      ("oracle_parser_data_test.mbt", "oracle_parser_vectors", ["P", "Q"]),
+    ] {
+    fixture(selected(random, modes), filename, binding)
+  }
+}

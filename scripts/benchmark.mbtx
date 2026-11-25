@@ -601,9 +601,89 @@ fn validate_utf8_inventory(records : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Defines every Ryu operation, precision, input size, implementation, and view offset.
+fn expected_ryu_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (labels, bytes) in [
+      (
+        [
+          "d2s-zero", "d2s-short", "d2s-pi", "d2s-smallint", "d2s-subnormal", "d2s-max",
+          "d2s-small", "d2s-large",
+        ],
+        8,
+      ),
+      (["f2s-zero", "f2s-short", "f2s-pi", "f2s-subnormal", "f2s-max"], 4),
+    ] {
+    for label in labels {
+      for implementation in ["own", "core"] {
+        expected["\{label}:\{implementation}:\{bytes}:0"] = ()
+      }
+    }
+  }
+  for kind in ["fixed", "exp"] {
+    for precision in [0, 6, 17, 100, 1000] {
+      expected["\{kind}-short-\{precision}:own:8:0"] = ()
+    }
+  }
+  for
+    label in [
+      "fixed-subnormal-324", "fixed-subnormal-1074", "fixed-large-0", "fixed-large-6",
+      "fixed-carry-2", "exp-subnormal-6", "exp-subnormal-324", "exp-large-6", "exp-carry-1",
+    ] {
+    expected["\{label}:own:8:0"] = ()
+  }
+  for
+    (label, length, partial) in [
+      ("s2d-short", 17, false),
+      ("s2d-integer", 16, false),
+      ("s2d-subnormal", 23, false),
+      ("s2d-max", 22, false),
+      ("s2d-offset", 6, true),
+      ("s2d-invalid", 4, false),
+      ("s2d-zeroes", 81, false),
+      ("s2f-short", 9, false),
+      ("s2f-integer", 8, false),
+      ("s2f-subnormal", 14, false),
+      ("s2f-max", 13, false),
+      ("s2f-offset", 6, true),
+      ("s2f-invalid", 4, false),
+      ("s2f-zeroes", 73, false),
+    ] {
+    for offset in (if partial { [0, 1, 3, 15] } else { [0] }) {
+      for implementation in ["own", "core"] {
+        expected["\{label}:\{implementation}:\{length}:\{offset}"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects missing, duplicated, or substituted Ryu operations, precisions, and offsets.
+fn validate_ryu_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_ryu_names()
+  guard records.length() == expected.length() else {
+    fail("Expected 85 Ryu cases")
+  }
+  for record in records {
+    guard record is { "name": String(name), .. } && expected.contains(name) else {
+      fail("Unexpected or duplicate Ryu benchmark")
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Incomplete Ryu inventory") }
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
+  if arguments == [arguments[0], "--self-test"] {
+    assert_eq(expected_ryu_names().length(), 85)
+    println("Ryu collector inventory self-test passed")
+    return
+  }
   let requested = if arguments.length() >= 2 {
     arguments[1:].to_owned()
   } else {
@@ -619,7 +699,7 @@ async fn main {
     [selector]
   }
   let selected_modules = if requested == ["all"] {
-    ["crc32", "url", "utf8", "base64", "atoi", "uuid"]
+    ["crc32", "url", "utf8", "base64", "atoi", "uuid", "ryu"]
   } else {
     requested
   }
@@ -662,7 +742,12 @@ async fn main {
       guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
         fail("Unsupported benchmark backend")
       }
-      let command = if package_dir == "uuid" {
+      let command = if package_dir == "ryu" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/ryu",
+        ]
+      } else if package_dir == "uuid" {
         [
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/uuid",
@@ -701,17 +786,27 @@ async fn main {
       }
       println("Benchmarking \{package_dir} on \{os}/\{backend}")
       let started = timestamp(os)
-      let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
-      @fs.write_text(
-        "\{directory}/\{os}/\{backend}.log",
-        output.stdout() + output.stderr(),
-      )
-      guard output.exit_code() == 0 else {
+      // Direct file redirects retain partial diagnostics if the collector exits early.
+      let stdout_log = "\{directory}/\{os}/\{backend}-stdout.log"
+      let stderr_log = "\{directory}/\{os}/\{backend}-stderr.log"
+      let exit_code = @shell.Cmd(
+        "moon",
+        command,
+        stdout=ToFile(stdout_log),
+        stderr=ToFile(stderr_log),
+      ).status()
+      let stdout = @fs.read_text(stdout_log)
+      let stderr = @fs.read_text(stderr_log)
+      @fs.write_text("\{directory}/\{os}/\{backend}.log", stdout + stderr)
+      guard exit_code == 0 else {
         fail(
           "Benchmark failed for \{package_dir}/\{backend}; see the saved log",
         )
       }
-      let records = summaries(output.stdout())
+      let records = summaries(stdout)
+      if package_dir == "ryu" {
+        validate_ryu_inventory(records)
+      }
       if package_dir == "uuid" {
         validate_uuid_inventory(records)
         add_uuid_metadata(records)
@@ -798,7 +893,24 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "uuid" {
+      "comparison_dependencies": if package_dir == "ryu" {
+        [
+          {
+            "label": "core-format",
+            "package": "moonbitlang/core/builtin",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "Double/Float.to_string with timed Ryu scientific-layout conversion and negative-zero restoration",
+          },
+          {
+            "label": "core-parse",
+            "package": "moonbitlang/core/string",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "parse_double(StringView), including Float narrowing for the measured binary32 corpus",
+          },
+        ]
+      } else if package_dir == "uuid" {
         [
           {
             "label": "bobzhang",
@@ -959,7 +1071,15 @@ async fn main {
           },
         ]
       },
-      "ported_upstream": if package_dir == "atoi" {
+      "ported_upstream": if package_dir == "ryu" {
+        {
+          "package": "ryu",
+          "repository": "https://github.com/ulfjack/ryu",
+          "revision": "4c0618b0e44f7ef027ebae05d2cc7812048f7c8f",
+          "license": "BSL-1.0",
+          "timed": false,
+        }
+      } else if package_dir == "atoi" {
         {
           "package": "atoi_simd",
           "version": "0.18.1",
@@ -967,6 +1087,22 @@ async fn main {
           "crate_sha256": "f3cdb3708a128e559a30fb830e8a77a5022ee6902806925c216658652b452a44",
           "license": "MIT",
           "timed": false,
+        }
+      } else {
+        Json::null()
+      },
+      "workload_metadata": if package_dir == "ryu" {
+        {
+          "cases_per_backend": 85,
+          "name_fields": [
+            "operation-and-precision", "implementation", "input-bytes", "UTF-16-view-offset",
+          ],
+          "format_input_widths": { "Double": 8, "Float": 4 },
+          "parse_offsets": [0, 1, 3, 15],
+          "printf_precisions": [0, 1, 2, 6, 17, 100, 324, 1000, 1074],
+          "input_storage": "Prepared numeric values and ASCII StringViews; Float construction and offset backing strings are outside timing",
+          "timed": "Public formatting/allocation or parsing, core layout/narrowing adaptations, optional-bit results, callback dispatch, and bench.keep",
+          "simd": false,
         }
       } else {
         Json::null()
