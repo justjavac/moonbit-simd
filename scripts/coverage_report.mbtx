@@ -7,8 +7,7 @@ import {
 ----
 
 ///|
-/// Exports only native trace metadata after the workspace's instrumented native tests.
-/// Flat library roots share the same three trace-source paths.
+/// Exports native trace metadata, optionally selecting one current runtime log.
 async fn main {
   let args = @env.args()
   guard args.length() >= 3 &&
@@ -16,34 +15,68 @@ async fn main {
     fail("Usage: moon run scripts/coverage_report.mbtx <OS flag> <module>...")
   }
   let flag = args[1]
-  for module_dir in args[2:] {
-    guard module_dir != "" &&
-      module_dir != "." &&
-      module_dir != ".." &&
-      module_dir.find("/") is None &&
-      module_dir.find("\\") is None else {
-      fail("Expected a direct workspace module directory")
+  let directories : Array[String] = []
+  let mut runtime_log : String? = None
+  for index = 2; index < args.length(); {
+    if args[index] == "--runtime-log" {
+      guard index + 1 < args.length() &&
+        runtime_log is None &&
+        args[index + 1] != "" else {
+        fail("--runtime-log requires one nonempty path and may be given once")
+      }
+      runtime_log = Some(args[index + 1])
+      continue index + 2
+    } else {
+      directories.push(args[index])
+      continue index + 1
     }
-    let prefix = "_build/native/debug/test/justjavac/\{module_dir}/\{module_dir}"
-    let report = "coverage-\{module_dir}-\{flag}.xml"
-    let output = @shell.Cmd("moon", [
-      "coverage",
-      "report",
-      "--",
-      "--no-ignore-missing-files",
-      "-p",
-      "justjavac/\{module_dir}",
-      "-f",
-      "cobertura",
-      "-o",
-      report,
-      "\{prefix}.trace.source",
-      "\{prefix}.whitebox_test.trace.source",
-      "\{prefix}.internal_test.trace.source",
-    ]).output(max_output_bytes=2097152)
-    guard output.exit_code() == 0 else {
-      fail(output.stdout() + output.stderr())
+  }
+  guard !directories.is_empty() else { fail("At least one module is required") }
+  for module_dir in directories {
+    guard ["crc32", "url", "utf8", "base64", "atoi", "uuid", "ryu", "memchr"].contains(
+      module_dir,
+    ) else {
+      fail(
+        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, uuid, ryu, or memchr",
+      )
     }
-    println("Generated \{report} from native coverage")
+    let packages = if module_dir == "memchr" {
+      [("memchr", "memchr"), ("memchr/memmem", "memchr-memmem")]
+    } else {
+      [(module_dir, module_dir)]
+    }
+    for (package_path, report_name) in packages {
+      let file_name = if package_path == "memchr/memmem" {
+        "memmem"
+      } else {
+        module_dir
+      }
+      let prefix = "_build/native/debug/test/justjavac/\{package_path}/\{file_name}"
+      let report = "coverage-\{report_name}-\{flag}.xml"
+      let command = [
+        "coverage",
+        "report",
+        "--",
+        "--no-ignore-missing-files",
+        "-p",
+        "justjavac/\{package_path}",
+        "-f",
+        "cobertura",
+        "-o",
+        report,
+      ]
+      if runtime_log is Some(path) {
+        command.push("-t")
+        command.push(path)
+      }
+      command.push("\{prefix}.trace.source")
+      command.push("\{prefix}.whitebox_test.trace.source")
+      command.push("\{prefix}.internal_test.trace.source")
+      let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
+      guard output.exit_code() == 0 else {
+        fail(output.stdout() + output.stderr())
+      }
+      println("Generated \{report} from native coverage")
+    }
   }
 }

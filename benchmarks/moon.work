@@ -8,4 +8,5 @@ members = [
   "../atoi",
   "../uuid",
   "../ryu",
+  "../memchr",
 ]

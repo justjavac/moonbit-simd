@@ -1,0 +1,7 @@
+import {
+  "justjavac/memchr" @bytesearch,
+  "justjavac/memchr/memmem",
+  "moonbitlang/core/bench",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

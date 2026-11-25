@@ -676,12 +676,139 @@ fn validate_ryu_inventory(records : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Defines every memchr workload, API variant, byte length, and offset independently.
+fn expected_memchr_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length, partial) in [
+      ("empty", 0, false),
+      ("short-hit", 15, false),
+      ("short-miss", 15, false),
+      ("tail-hit", 65, false),
+      ("scan-miss", 4096, true),
+      ("scan-hit", 4096, true),
+      ("huge-hit", 1048576, false),
+    ] {
+    for arity in 1..<=3 {
+      let implementations = if arity == 1 {
+        ["own-scalar", "own-simd", "reference", "core"]
+      } else {
+        ["own-scalar", "own-simd", "reference"]
+      }
+      for direction in ["memchr", "memrchr"] {
+        for implementation in implementations {
+          for offset in (if partial { [0, 1, 15] } else { [0] }) {
+            expected["\{direction}\{arity}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+          }
+        }
+      }
+    }
+  }
+  for
+    (label, length) in [
+      ("count1-dense", 65536),
+      ("count3-dense", 65536),
+      ("iter1-dense", 4096),
+      ("iter3-sparse", 4096),
+    ] {
+    for implementation in ["own-scalar", "own-simd", "reference"] {
+      expected["\{label}:\{implementation}:\{length}:0"] = ()
+    }
+  }
+  for
+    (label, length, partial) in [
+      ("empty", 4, false),
+      ("short-hit", 15, false),
+      ("scan-miss", 4096, false),
+      ("scan-hit", 4096, true),
+      ("long-hit", 8192, false),
+      ("periodic-miss", 4096, false),
+      ("wide-hit", 16384, false),
+    ] {
+    for operation in ["find", "rfind", "reuse-find", "reuse-rfind"] {
+      let implementations = if operation == "find" || operation == "reuse-find" {
+        ["own-scalar", "own-simd", "own-twoway", "core"]
+      } else {
+        ["own-scalar", "own-simd", "core"]
+      }
+      for implementation in implementations {
+        for offset in (if partial { [0, 1, 15] } else { [0] }) {
+          expected["\{operation}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for (label, length) in [("overlap", 4096), ("empty", 256)] {
+    for operation in ["find-iter", "rfind-iter"] {
+      for implementation in ["own-scalar", "own-simd", "reference"] {
+        expected["\{operation}-\{label}:\{implementation}:\{length}:0"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects missing, duplicate, or substituted byte-search cases before saving data.
+fn validate_memchr_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_memchr_names()
+  guard expected.length() == 370 && records.length() == expected.length() else {
+    fail("Expected all 370 memchr cases per backend")
+  }
+  for record in records {
+    match record {
+      { "name": String(name), .. } => {
+        guard expected.contains(name) else {
+          fail("Unexpected memchr case: " + name)
+        }
+        let _ = expected.remove(name)
+      }
+      _ => fail("Missing memchr case name")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete memchr case inventory") }
+}
+
+///|
+/// Records exact byte/needle lengths and timed adaptation for the search corpus.
+fn memchr_workload_metadata() -> Json {
+  {
+    "cases_per_backend": 370,
+    "name_fields": [
+      "operation-and-workload", "implementation", "haystack-bytes", "byte-offset",
+    ],
+    "byte_needles": [0, 1, 2],
+    "byte_input_bytes": [0, 15, 65, 4096, 1048576],
+    "partial_view_offsets": [1, 15],
+    "partial_view_sentinels": 0,
+    "substring_needle_bytes": {
+      "empty": 0,
+      "short-hit": 3,
+      "scan-miss": 3,
+      "scan-hit": 3,
+      "long-hit": 65,
+      "periodic-miss": 33,
+      "wide-hit": 257,
+    },
+    "iteration_needle_bytes": { "overlap": 3, "empty": 0 },
+    "byte_count_bytes": 65536,
+    "byte_iteration_bytes": 4096,
+    "substring_iteration_bytes": { "overlap": 4096, "empty": 256 },
+    "timed": "Public calls, one-off finder and iterator construction, lazy consumption, result/implementation adapters, callback dispatch, and keep barriers",
+    "prepared": "Immutable bytes, partial views, needles, and reusable forward/reverse finders",
+    "core_adaptation": "BytesView.find/rev_find on the same views; core has no explicit reusable Finder or multi-byte-union/iterator API",
+    "throughput": "Searches report time per call; only full byte counts read every supplied byte",
+  }
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
   if arguments == [arguments[0], "--self-test"] {
     assert_eq(expected_ryu_names().length(), 85)
-    println("Ryu collector inventory self-test passed")
+    assert_eq(expected_memchr_names().length(), 370)
+    println("Benchmark collector inventory self-test passed")
     return
   }
   let requested = if arguments.length() >= 2 {
@@ -699,7 +826,7 @@ async fn main {
     [selector]
   }
   let selected_modules = if requested == ["all"] {
-    ["crc32", "url", "utf8", "base64", "atoi", "uuid", "ryu"]
+    ["crc32", "url", "utf8", "base64", "atoi", "uuid", "ryu", "memchr"]
   } else {
     requested
   }
@@ -742,7 +869,12 @@ async fn main {
       guard ["native", "wasm", "wasm-gc", "js"].contains(backend) else {
         fail("Unsupported benchmark backend")
       }
-      let command = if package_dir == "ryu" {
+      let command = if package_dir == "memchr" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/memchr",
+        ]
+      } else if package_dir == "ryu" {
         [
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/ryu",
@@ -806,6 +938,9 @@ async fn main {
       let records = summaries(stdout)
       if package_dir == "ryu" {
         validate_ryu_inventory(records)
+      }
+      if package_dir == "memchr" {
+        validate_memchr_inventory(records)
       }
       if package_dir == "uuid" {
         validate_uuid_inventory(records)
@@ -893,7 +1028,24 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "ryu" {
+      "comparison_dependencies": if package_dir == "memchr" {
+        [
+          {
+            "label": "core",
+            "package": "moonbitlang/core/bytes",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "BytesView.find / rev_find, identical prepared byte and needle views",
+          },
+          {
+            "label": "reference",
+            "package": "justjavac/benchmarks/memchr",
+            "version": "0.1.0",
+            "license": "MIT",
+            "api": "Independent per-byte search, counts, and non-overlapping substring iteration",
+          },
+        ]
+      } else if package_dir == "ryu" {
         [
           {
             "label": "core-format",
@@ -1071,7 +1223,16 @@ async fn main {
           },
         ]
       },
-      "ported_upstream": if package_dir == "ryu" {
+      "ported_upstream": if package_dir == "memchr" {
+        {
+          "package": "memchr",
+          "version": "2.8.3",
+          "revision": "5fdb40c054e1fff359a2f7bdf7f87a13b34b465d",
+          "crate_sha256": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+          "license": "MIT",
+          "timed": false,
+        }
+      } else if package_dir == "ryu" {
         {
           "package": "ryu",
           "repository": "https://github.com/ulfjack/ryu",
@@ -1091,7 +1252,9 @@ async fn main {
       } else {
         Json::null()
       },
-      "workload_metadata": if package_dir == "ryu" {
+      "workload_metadata": if package_dir == "memchr" {
+        memchr_workload_metadata()
+      } else if package_dir == "ryu" {
         {
           "cases_per_backend": 85,
           "name_fields": [
@@ -1109,7 +1272,17 @@ async fn main {
       },
       "backends": Json(backends),
     }
-    @fs.write_text("\{directory}/\{os}.json", result.stringify(indent=2))
-    println("Saved \{directory}/\{os}.json")
+    let record_name = if package_dir == "memchr" &&
+      run_id == "" &&
+      targets.length() == 1 {
+      os + "-" + targets[0]
+    } else {
+      os
+    }
+    @fs.write_text(
+      "\{directory}/\{record_name}.json",
+      result.stringify(indent=2),
+    )
+    println("Saved \{directory}/\{record_name}.json")
   }
 }

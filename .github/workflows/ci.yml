@@ -68,7 +68,7 @@ jobs:
         run: moon fmt
 
       - name: Check benchmark automation formatting
-        run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx scripts/coverage_report.mbtx scripts/url_fixtures.mbtx scripts/url_oracle.mbtx scripts/utf8_oracle.mbtx scripts/atoi_oracle.mbtx scripts/ryu_tables.mbtx scripts/ryu_oracle.mbtx scripts/ryu_benchmark_report.mbtx
+        run: moon fmt --check scripts/benchmark.mbtx scripts/benchmark_report.mbtx scripts/coverage_report.mbtx scripts/url_fixtures.mbtx scripts/url_oracle.mbtx scripts/utf8_oracle.mbtx scripts/atoi_oracle.mbtx scripts/ryu_tables.mbtx scripts/ryu_oracle.mbtx scripts/ryu_benchmark_report.mbtx scripts/memchr_fixtures.mbtx scripts/memchr_benchmark_report.mbtx
 
       - name: Check comparison module
         run: moon -C benchmarks check --target all --deny-warn
@@ -82,6 +82,9 @@ jobs:
       - name: Test benchmark report validation
         run: moon run scripts/benchmark_report.mbtx --self-test
 
+      - name: Test benchmark collector inventories
+        run: moon run scripts/benchmark.mbtx --self-test
+
       - name: Verify generated and formatted files
         run: git diff --exit-code
 
@@ -92,7 +95,7 @@ jobs:
         run: moon test --target native --enable-coverage
 
       - name: Generate filtered native Cobertura reports
-        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url utf8 base64 atoi uuid ryu
+        run: moon run scripts/coverage_report.mbtx ${{ matrix.flag }} crc32 url utf8 base64 atoi uuid ryu memchr
 
       - name: Save the coverage report
         uses: actions/upload-artifact@v4
@@ -106,13 +109,15 @@ jobs:
             coverage-atoi-${{ matrix.flag }}.xml
             coverage-uuid-${{ matrix.flag }}.xml
             coverage-ryu-${{ matrix.flag }}.xml
+            coverage-memchr-${{ matrix.flag }}.xml
+            coverage-memchr-memmem-${{ matrix.flag }}.xml
           if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
-          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml,coverage-utf8-${{ matrix.flag }}.xml,coverage-base64-${{ matrix.flag }}.xml,coverage-atoi-${{ matrix.flag }}.xml,coverage-uuid-${{ matrix.flag }}.xml,coverage-ryu-${{ matrix.flag }}.xml
+          files: coverage-crc32-${{ matrix.flag }}.xml,coverage-url-${{ matrix.flag }}.xml,coverage-utf8-${{ matrix.flag }}.xml,coverage-base64-${{ matrix.flag }}.xml,coverage-atoi-${{ matrix.flag }}.xml,coverage-uuid-${{ matrix.flag }}.xml,coverage-ryu-${{ matrix.flag }}.xml,coverage-memchr-${{ matrix.flag }}.xml,coverage-memchr-memmem-${{ matrix.flag }}.xml
           flags: ${{ matrix.flag }}
           name: workspace-${{ matrix.flag }}
           disable_search: true

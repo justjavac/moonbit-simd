@@ -21,6 +21,7 @@ library modules.
 | `justjavac/utf8` | Strict UTF-8 validation, precise errors, and streaming, ported from simdutf8 | [Guide](utf8/README.md) · [Examples](utf8/README.mbt.md) | [BENCHMARK.md](utf8/BENCHMARK.md) |
 | `justjavac/base64` | RFC 4648 Base64 and WHATWG forgiving decoding, ported from base64-simd | [Guide](base64/README.md) · [Examples](base64/README.mbt.md) | [BENCHMARK.md](base64/BENCHMARK.md) |
 | `justjavac/atoi` | Decimal byte-to-integer parsing, exact prefixes, and 8–128-bit ranges, ported from atoi_simd | [Guide](atoi/README.md) · [Examples](atoi/README.mbt.md) | [BENCHMARK.md](atoi/BENCHMARK.md) |
+| `justjavac/memchr` | Byte unions, double-ended matches, and reusable Two-Way substring search, ported from memchr | [Guide](memchr/README.md) · [Examples](memchr/README.mbt.md) | [BENCHMARK.md](memchr/BENCHMARK.md) |
 | `justjavac/uuid` | UUID text/byte parsing, formatting, and reusable output buffers, ported from uuid-simd | [Guide](uuid/README.md) · [Examples](uuid/README.mbt.md) | [BENCHMARK.md](uuid/BENCHMARK.md) |
 
 | `justjavac/ryu` | Shortest Float/Double decimals, fixed/scientific formatting, and experimental parsing, ported from Ryu | [Guide](ryu/README.md) · [Examples](ryu/README.mbt.md) | [BENCHMARK.md](ryu/BENCHMARK.md) |
@@ -63,7 +64,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi uuid ryu
+moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi uuid ryu memchr
 ```
 
 ## Benchmarks
@@ -104,6 +105,7 @@ moon run scripts/benchmark.mbtx base64
 moon run scripts/benchmark.mbtx atoi
 moon run scripts/benchmark.mbtx uuid
 moon run scripts/benchmark.mbtx ryu
+moon run scripts/benchmark.mbtx memchr
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as

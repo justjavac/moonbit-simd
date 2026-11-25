@@ -1,5 +1,20 @@
 # Development benchmarks
 
+The [byte-search adapters](memchr) compare byte unions, both search directions,
+counts, and lazy iteration against independent per-byte references. Single-byte
+and substring searches also use bundled core `BytesView.find`/`rev_find` on the
+same views. The 370-case inventory includes short/large input, offsets 0/1/15,
+periodic patterns, reusable finders, empty needles, and directional non-overlap.
+All adapters verify identical indices, counts, or index sums before timing.
+
+Run `moon -C benchmarks test memchr --target all`, then
+`moon run scripts/benchmark.mbtx memchr`, or select `memchr` in the Benchmarks
+workflow. Inputs, views, needles, and reusable finders are prepared outside timing;
+one-off construction and lazy consumption stay inside it. The
+[search report validator](../scripts/memchr_benchmark_report.mbtx) verifies the
+complete inventory, sampling statistics, and snapshot identity. Local rendering
+uses `moon run scripts/benchmark_report.mbtx --local memchr _build/benchmarks/memchr/windows.json _build/memchr-report`.
+
 The [Ryu adapters](ryu) compare shortest Float/Double formatting and decimal
 parsing with bundled core public APIs. Core's conversion to the exact Ryu
 scientific layout and its required Float parse narrowing stay inside timing.

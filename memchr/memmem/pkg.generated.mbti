@@ -1,0 +1,58 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/memchr/memmem"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn find(BytesView, BytesView, simd? : Bool, prefilter? : Prefilter) -> Int32?
+
+pub fn find_iter(BytesView, BytesView, simd? : Bool, prefilter? : Prefilter) -> FindIter
+
+pub fn rfind(BytesView, BytesView, simd? : Bool) -> Int32?
+
+pub fn rfind_iter(BytesView, BytesView, simd? : Bool) -> FindRevIter
+
+// Errors
+
+// Types and methods
+pub struct FindIter {
+  // private fields
+}
+pub fn FindIter::copy(Self) -> Self
+pub fn FindIter::iter(Self) -> Iter[Int32]
+pub fn FindIter::next(Self) -> Int32?
+
+pub struct FindRevIter {
+  // private fields
+}
+pub fn FindRevIter::copy(Self) -> Self
+pub fn FindRevIter::iter(Self) -> Iter[Int32]
+pub fn FindRevIter::next(Self) -> Int32?
+
+pub struct Finder {
+  // private fields
+}
+pub fn Finder::find(Self, BytesView) -> Int32?
+pub fn Finder::find_iter(Self, BytesView) -> FindIter
+pub fn Finder::needle(Self) -> BytesView
+pub fn Finder::new(BytesView, simd? : Bool, prefilter? : Prefilter) -> Self
+
+pub struct FinderRev {
+  // private fields
+}
+pub fn FinderRev::needle(Self) -> BytesView
+pub fn FinderRev::new(BytesView, simd? : Bool) -> Self
+pub fn FinderRev::rfind(Self, BytesView) -> Int32?
+pub fn FinderRev::rfind_iter(Self, BytesView) -> FindRevIter
+
+#derive(Eq, @debug.Debug)
+pub(all) enum Prefilter {
+  Auto
+  None
+}
+
+// Type aliases
+
+// Traits

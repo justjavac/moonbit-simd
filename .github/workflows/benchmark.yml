@@ -16,6 +16,7 @@ on:
           - utf8
           - uuid
           - ryu
+          - memchr
   push:
     branches: [main]
     paths:

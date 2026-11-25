@@ -2898,16 +2898,32 @@ async fn ryu_report(arguments : Array[String]) -> Unit {
 }
 
 ///|
+/// Runs the independent search-report validator without embedding its corpus here.
+async fn memchr_report(arguments : Array[String]) -> Unit {
+  let output = @shell.Cmd(
+    "moon",
+    ["run", "scripts/memchr_benchmark_report.mbtx"] + arguments,
+  ).output(max_output_bytes=2097152)
+  guard output.exit_code() == 0 else { fail(output.stdout() + output.stderr()) }
+  println(output.stdout().trim())
+}
+
+///|
 /// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
 async fn main {
   let arguments = @env.args()
   if arguments.length() == 2 && arguments[1] == "--self-test" {
     self_test()
     ryu_report(["--self-test"])
+    memchr_report(["--self-test"])
     println("Benchmark report self-test passed")
     return
   }
   if arguments.length() == 5 && arguments[1] == "--local" {
+    if arguments[2] == "memchr" {
+      memchr_report(["--local", arguments[3], arguments[4]])
+      return
+    }
     if arguments[2] == "ryu" {
       ryu_report(["--local", arguments[3], arguments[4]])
       return
@@ -2950,6 +2966,10 @@ async fn main {
       package_dir.find("/") is None &&
       package_dir.find("\\") is None else {
       fail("Invalid module directory")
+    }
+    if package_dir == "memchr" {
+      memchr_report([input + "/memchr", output + "/memchr"])
+      continue
     }
     if package_dir == "ryu" {
       ryu_report([input + "/ryu", output + "/ryu"])

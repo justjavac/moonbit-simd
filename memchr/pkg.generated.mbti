@@ -1,0 +1,43 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/memchr"
+
+// Values
+pub fn memchr(Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memchr2(Byte, Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memchr2_iter(Byte, Byte, BytesView, simd? : Bool) -> Matches
+
+pub fn memchr3(Byte, Byte, Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memchr3_iter(Byte, Byte, Byte, BytesView, simd? : Bool) -> Matches
+
+pub fn memchr_iter(Byte, BytesView, simd? : Bool) -> Matches
+
+pub fn memrchr(Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memrchr2(Byte, Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memrchr2_iter(Byte, Byte, BytesView, simd? : Bool) -> Matches
+
+pub fn memrchr3(Byte, Byte, Byte, BytesView, simd? : Bool) -> Int32?
+
+pub fn memrchr3_iter(Byte, Byte, Byte, BytesView, simd? : Bool) -> Matches
+
+pub fn memrchr_iter(Byte, BytesView, simd? : Bool) -> Matches
+
+// Errors
+
+// Types and methods
+pub struct Matches {
+  // private fields
+}
+pub fn Matches::copy(Self) -> Self
+pub fn Matches::count(Self) -> Int32
+pub fn Matches::iter(Self) -> Iter[Int32]
+pub fn Matches::next(Self) -> Int32?
+pub fn Matches::next_back(Self) -> Int32?
+
+// Type aliases
+
+// Traits

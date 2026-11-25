@@ -1,0 +1,12 @@
+import {
+  "justjavac/memchr" @bytesearch,
+  "moonbitlang/core/simd",
+}
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+// Vector declarations are excluded on scalar-only backends.
+
+warnings = "-alert_experimental-unused_package"

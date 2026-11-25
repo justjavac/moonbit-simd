@@ -1,0 +1,943 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+----
+
+///|
+/// Retrieves a required object field without substituting missing provenance.
+fn field(value : Json, key : String) -> Json raise {
+  match value {
+    Object(fields) =>
+      fields.get(key).unwrap_or_else(() => fail("Missing field: " + key))
+    _ => fail("Expected an object")
+  }
+}
+
+///|
+/// Retrieves a required string field without coercing other JSON types.
+fn text(value : Json, key : String) -> String raise {
+  match field(value, key) {
+    String(value) => value
+    _ => fail("Expected string: " + key)
+  }
+}
+
+///|
+/// Retrieves a finite statistic without accepting malformed numeric fields.
+fn number(value : Json, key : String) -> Double raise {
+  match field(value, key) {
+    Number(value, ..) => {
+      guard value.is_finite() else { fail("Non-finite " + key) }
+      value
+    }
+    _ => fail("Expected number: " + key)
+  }
+}
+
+///|
+/// Retrieves a required array field without ignoring absent data.
+fn array(value : Json, key : String) -> Array[Json] raise {
+  match field(value, key) {
+    Array(values) => values
+    _ => fail("Expected array: " + key)
+  }
+}
+
+///|
+/// Defines the exact search inventory independently of the collector and adapters.
+fn expected_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length, offsets) in [
+      ("empty", 0, [0]),
+      ("short-hit", 15, [0]),
+      ("short-miss", 15, [0]),
+      ("tail-hit", 65, [0]),
+      ("scan-miss", 4096, [0, 1, 15]),
+      ("scan-hit", 4096, [0, 1, 15]),
+      ("huge-hit", 1048576, [0]),
+    ] {
+    for
+      (operation, arity) in [
+        ("memchr1", 1),
+        ("memrchr1", 1),
+        ("memchr2", 2),
+        ("memrchr2", 2),
+        ("memchr3", 3),
+        ("memrchr3", 3),
+      ] {
+      let implementations = if arity == 1 {
+        ["own-scalar", "own-simd", "reference", "core"]
+      } else {
+        ["own-scalar", "own-simd", "reference"]
+      }
+      for implementation in implementations {
+        for offset in offsets {
+          expected["\{operation}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for
+    (label, length) in [
+      ("count1-dense", 65536),
+      ("count3-dense", 65536),
+      ("iter1-dense", 4096),
+      ("iter3-sparse", 4096),
+    ] {
+    for implementation in ["own-scalar", "own-simd", "reference"] {
+      expected["\{label}:\{implementation}:\{length}:0"] = ()
+    }
+  }
+  for
+    (label, length, offsets) in [
+      ("empty", 4, [0]),
+      ("short-hit", 15, [0]),
+      ("scan-miss", 4096, [0]),
+      ("scan-hit", 4096, [0, 1, 15]),
+      ("long-hit", 8192, [0]),
+      ("periodic-miss", 4096, [0]),
+      ("wide-hit", 16384, [0]),
+    ] {
+    for operation in ["find", "reuse-find", "rfind", "reuse-rfind"] {
+      let implementations = if operation == "find" || operation == "reuse-find" {
+        ["own-scalar", "own-simd", "own-twoway", "core"]
+      } else {
+        ["own-scalar", "own-simd", "core"]
+      }
+      for implementation in implementations {
+        for offset in offsets {
+          expected["\{operation}-\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for (label, length) in [("empty", 256), ("overlap", 4096)] {
+    for operation in ["find-iter", "rfind-iter"] {
+      for implementation in ["own-scalar", "own-simd", "reference"] {
+        expected["\{operation}-\{label}:\{implementation}:\{length}:0"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Defines the exact needle lengths, view contracts, and timed API adaptations.
+fn expected_metadata() -> Json {
+  {
+    "cases_per_backend": 370,
+    "name_fields": [
+      "operation-and-workload", "implementation", "haystack-bytes", "byte-offset",
+    ],
+    "byte_needles": [0, 1, 2],
+    "byte_input_bytes": [0, 15, 65, 4096, 1048576],
+    "partial_view_offsets": [1, 15],
+    "partial_view_sentinels": 0,
+    "substring_needle_bytes": {
+      "empty": 0,
+      "short-hit": 3,
+      "scan-miss": 3,
+      "scan-hit": 3,
+      "long-hit": 65,
+      "periodic-miss": 33,
+      "wide-hit": 257,
+    },
+    "iteration_needle_bytes": { "overlap": 3, "empty": 0 },
+    "byte_count_bytes": 65536,
+    "byte_iteration_bytes": 4096,
+    "substring_iteration_bytes": { "overlap": 4096, "empty": 256 },
+    "timed": "Public calls, one-off finder and iterator construction, lazy consumption, result/implementation adapters, callback dispatch, and keep barriers",
+    "prepared": "Immutable bytes, partial views, needles, and reusable forward/reverse finders",
+    "core_adaptation": "BytesView.find/rev_find on the same views; core has no explicit reusable Finder or multi-byte-union/iterator API",
+    "throughput": "Searches report time per call; only full byte counts read every supplied byte",
+  }
+}
+
+///|
+/// Rejects partial or substituted inventories even when their case counts agree.
+fn validate_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_names()
+  guard expected.length() == 370 && summaries.length() == 370 else {
+    fail("Expected all 370 memchr cases per backend")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected or duplicate case: " + name)
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Incomplete memchr inventory") }
+}
+
+///|
+/// Verifies every unrounded timing, distribution statistic, and batch descriptor.
+fn validate_statistics(summary : Json) -> Unit raise {
+  let mean = number(summary, "mean")
+  let minimum = number(summary, "min")
+  let maximum = number(summary, "max")
+  let median = number(summary, "median")
+  let deviation = number(summary, "std_dev")
+  let cv = number(summary, "std_dev_pct")
+  let variance = number(summary, "variance")
+  let sum = number(summary, "sum")
+  let mad = number(summary, "median_abs_dev")
+  let mad_pct = number(summary, "median_abs_dev_pct")
+  let batch = number(summary, "batch_size")
+  let tolerance = maximum.abs() * 0.000000001 + 0.000000001
+  guard mean > 0 &&
+    minimum >= 0 &&
+    minimum <= mean + tolerance &&
+    mean <= maximum + tolerance &&
+    minimum <= median + tolerance &&
+    median <= maximum + tolerance &&
+    deviation >= 0 &&
+    cv >= 0 &&
+    variance >= 0 &&
+    mad >= 0 &&
+    mad_pct >= 0 &&
+    number(summary, "runs") == 10 &&
+    batch >= 1 &&
+    batch == batch.floor() &&
+    (sum - mean * 10).abs() <= tolerance * 10 &&
+    (variance - deviation * deviation).abs() <= tolerance * maximum.abs().max(1) &&
+    (cv - deviation * 100 / mean).abs() <= tolerance * 100 / mean else {
+    fail("Invalid memchr timing statistics")
+  }
+  let quartiles = array(summary, "quartiles")
+  guard quartiles.length() == 3 else { fail("Expected three quartiles") }
+  let values = quartiles.map(value => {
+    match value {
+      Number(value, ..) => {
+        guard value.is_finite() else { fail("Non-finite quartile") }
+        value
+      }
+      _ => fail("Invalid quartile")
+    }
+  })
+  guard minimum <= values[0] + tolerance &&
+    values[0] <= values[1] + tolerance &&
+    values[1] <= values[2] + tolerance &&
+    values[2] <= maximum + tolerance &&
+    number(summary, "iqr") >= 0 &&
+    (number(summary, "iqr") - (values[2] - values[0])).abs() <= tolerance else {
+    fail("Invalid memchr quartiles")
+  }
+}
+
+///|
+/// Verifies a complete backend with the exact release command and UTC timestamps.
+fn validate_backend(backend : Json) -> Unit raise {
+  let name = text(backend, "backend")
+  guard ["native", "wasm", "wasm-gc", "js"].contains(name) &&
+    text(backend, "time_unit") == "microseconds" &&
+    text(backend, "command") ==
+    "moon -C benchmarks bench --target " +
+    name +
+    " --release --no-parallelize -p justjavac/benchmarks/memchr" else {
+    fail("Missing memchr release command or timing units")
+  }
+  let started = text(backend, "started_at_utc")
+  let finished = text(backend, "finished_at_utc")
+  guard started.length() == 20 &&
+    finished.length() == 20 &&
+    started.has_suffix("Z") &&
+    finished.has_suffix("Z") &&
+    finished >= started else {
+    fail("Missing or reversed UTC timestamps")
+  }
+  let summaries = array(backend, "summaries")
+  validate_inventory(summaries)
+  for summary in summaries {
+    validate_statistics(summary)
+  }
+}
+
+///|
+/// Verifies the fixed upstream pin, actual core version, and independent baseline.
+fn validate_metadata(record : Json, fragment~ : Bool = false) -> Unit raise {
+  let upstream = field(record, "ported_upstream")
+  guard number(record, "schema_version") == 1 &&
+    text(record, "module") == "justjavac/memchr" &&
+    text(upstream, "package") == "memchr" &&
+    text(upstream, "version") == "2.8.3" &&
+    text(upstream, "revision") == "5fdb40c054e1fff359a2f7bdf7f87a13b34b465d" &&
+    text(upstream, "crate_sha256") ==
+    "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98" &&
+    text(upstream, "license") == "MIT" &&
+    field(upstream, "timed") == Json(false) &&
+    field(record, "workload_metadata") == expected_metadata() else {
+    fail("Changed memchr provenance or workload contract")
+  }
+  let dependencies = array(record, "comparison_dependencies")
+  guard dependencies.length() == 2 else {
+    fail("Expected core and independent reference dependencies")
+  }
+  let core = dependencies[0]
+  let reference = dependencies[1]
+  guard text(core, "label") == "core" &&
+    text(core, "package") == "moonbitlang/core/bytes" &&
+    text(core, "version").has_prefix("moonc ") &&
+    text(record, "toolchain").find(text(core, "version")) is Some(_) &&
+    text(core, "license") == "Apache-2.0" &&
+    text(core, "api") != "" &&
+    text(reference, "label") == "reference" &&
+    text(reference, "package") == "justjavac/benchmarks/memchr" &&
+    text(reference, "version") == "0.1.0" &&
+    text(reference, "license") == "MIT" &&
+    text(reference, "api") != "" else {
+    fail("Changed or incomplete memchr comparison dependencies")
+  }
+  guard text(record, "module_manifest").find("name = \"justjavac/memchr\"")
+    is Some(_) &&
+    text(record, "comparison_manifest").find("justjavac/memchr@0.1.0")
+    is Some(_) &&
+    text(record, "source_commit").length() == 40 &&
+    text(record, "dependency_tree") != "" &&
+    text(record, "node") != "" &&
+    text(field(record, "cpu"), "model") != "" &&
+    text(field(record, "cpu"), "architecture") != "" else {
+    fail("Missing source, runner, or manifest metadata")
+  }
+  let backends = array(record, "backends")
+  guard backends.length() == (if fragment { 1 } else { 4 }) else {
+    fail("Missing memchr backend measurements")
+  }
+  let names : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !names.contains(name) else { fail("Duplicate memchr backend") }
+    names[name] = ()
+    validate_backend(backend)
+  }
+}
+
+///|
+/// Validates local measurements without accepting them as a published CI snapshot.
+fn validate_local(record : Json, fragment~ : Bool = false) -> Unit raise {
+  guard text(record, "source") == "local" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" &&
+    text(record, "run_attempt") == "" &&
+    ["linux", "macos", "windows"].contains(text(record, "os")) &&
+    (
+      field(record, "working_tree_dirty") == Json(true) ||
+      field(record, "working_tree_dirty") == Json(false)
+    ) else {
+    fail("Expected a complete explicitly local memchr artifact")
+  }
+  validate_metadata(record, fragment~)
+}
+
+///|
+/// Rejects partial/mixed CI data, including manifests, dependencies, run attempts, and OSes.
+fn validate_snapshot(records : Array[Json]) -> Unit raise {
+  guard records.length() == 3 else {
+    fail("A snapshot requires three operating systems")
+  }
+  let first = records[0]
+  let run = text(first, "run_id")
+  let attempt = text(first, "run_attempt")
+  guard run != "" &&
+    @string.parse_int(run) > 0 &&
+    @string.parse_int(attempt) > 0 else {
+    fail("Missing CI run or attempt")
+  }
+  let seen : Map[String, Unit] = Map([])
+  for record in records {
+    let os = text(record, "os")
+    guard ["linux", "macos", "windows"].contains(os) && !seen.contains(os) else {
+      fail("Missing or duplicate CI OS")
+    }
+    seen[os] = ()
+    validate_metadata(record)
+    guard text(record, "source") == "github-actions" &&
+      field(record, "working_tree_dirty") == Json(false) &&
+      text(record, "source_commit") == text(first, "source_commit") &&
+      text(record, "repository") == text(first, "repository") &&
+      text(record, "repository") != "" &&
+      text(record, "run_id") == run &&
+      text(record, "run_attempt") == attempt &&
+      text(record, "run_url") ==
+      "https://github.com/" + text(first, "repository") + "/actions/runs/" + run &&
+      array(record, "comparison_dependencies") ==
+      array(first, "comparison_dependencies") &&
+      field(record, "ported_upstream") == field(first, "ported_upstream") &&
+      text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+      text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+      text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+      text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+      fail("Mixed or non-CI memchr provenance")
+    }
+  }
+}
+
+///|
+/// Rounds only display values while retaining unrounded JSON statistics.
+fn decimal(value : Double) -> String {
+  ((value * 1000).round() / 1000).to_string()
+}
+
+///|
+/// Escapes runner metadata so Markdown table cells cannot inject rows or HTML.
+fn cell(value : String) -> String {
+  value
+  .replace_all(old="|", new="\\|")
+  .replace_all(old="\r", new=" ")
+  .replace_all(old="\n", new=" ")
+  .replace_all(old="<", new="&lt;")
+  .replace_all(old=">", new="&gt;")
+}
+
+///|
+/// Indexes a previously validated backend by exact case name.
+fn index(backend : Json) -> Map[String, Json] raise {
+  let result : Map[String, Json] = Map([])
+  for summary in array(backend, "summaries") {
+    result[text(summary, "name")] = summary
+  }
+  result
+}
+
+///|
+/// Renders representative means in nanoseconds with possible-noise markers.
+fn write_table(
+  builder : StringBuilder,
+  cases : Map[String, Json],
+  rows : Array[(String, Int32, Int32)],
+  variants : Array[(String, String)],
+) -> Unit raise {
+  builder.write_string("| Workload | Bytes | Offset |")
+  for (_, label) in variants {
+    builder.write_string(" " + label + " ns |")
+  }
+  builder.write_string("\n| --- | ---: | ---: |")
+  for _ in variants {
+    builder.write_string(" ---: |")
+  }
+  builder.write_string("\n")
+  for (workload, bytes, offset) in rows {
+    let mut best = 0.0
+    for (variant, _) in variants {
+      if cases.get("\{workload}:\{variant}:\{bytes}:\{offset}") is Some(summary) {
+        let mean = number(summary, "mean")
+        if best == 0 || mean < best {
+          best = mean
+        }
+      }
+    }
+    builder.write_string("| \{workload} | \{bytes} | \{offset} |")
+    for (variant, _) in variants {
+      match cases.get("\{workload}:\{variant}:\{bytes}:\{offset}") {
+        None => builder.write_string(" n/a |")
+        Some(summary) => {
+          let mean = number(summary, "mean")
+          let value = decimal(mean * 1000)
+          let value = if mean == best { "**" + value + "**" } else { value }
+          builder.write_string(
+            " " +
+            value +
+            (if number(summary, "std_dev_pct") >= 5 { "*" } else { "" }) +
+            " |",
+          )
+        }
+      }
+    }
+    builder.write_string("\n")
+  }
+  builder.write_string("\n")
+}
+
+///|
+/// Renders concise comparison tables with complete snapshot provenance and API costs.
+fn report(records : Array[Json], is_local~ : Bool) -> String raise {
+  let builder = StringBuilder()
+  let data_file = if is_local {
+    "LOCAL-BENCHMARK-DATA.json"
+  } else {
+    "BENCHMARK-DATA.json"
+  }
+  let first = records[0]
+  builder.write_string("# memchr search performance comparison\n\n")
+  if is_local {
+    builder.write_string(
+      "**Local measurements:** " +
+      cell(text(first, "os")) +
+      ", base commit `" +
+      text(first, "source_commit") +
+      "`, working tree dirty: " +
+      field(first, "working_tree_dirty").stringify() +
+      ". These measurements are separate from the complete CI snapshot.\n\n",
+    )
+  } else {
+    builder.write_string(
+      "Measured source `" +
+      text(first, "source_commit") +
+      "` in [CI run " +
+      text(first, "run_id") +
+      "](" +
+      text(first, "run_url") +
+      "), attempt " +
+      text(first, "run_attempt") +
+      ".\n\n",
+    )
+  }
+  builder.write_string(
+    "**Scope:** \{records.length()} OS x 4 backends x 370 cases = **\{records.length() * 1480} measurements**. [\{data_file}](\{data_file}) preserves every case, unrounded statistic, sample batch, CPU, toolchain, timestamps, commands, manifests, dependencies, and input/needle lengths.\n\n",
+  )
+  builder.write_string(
+    "`own-scalar` uses SWAR byte search (ordinary per-byte comparisons on JavaScript) and scalar pair filtering; `own-simd` requests sixteen-byte V128 scans on native/linear-memory Wasm, with scalar fallback on Wasm GC/JavaScript and short input. `own-twoway` disables forward filtering. Nonempty multi-byte reverse search uses Two-Way on every backend. Core provides byte-substring find/rev_find; the independent reference supplies multi-byte unions, counting, and non-overlapping iteration. Rust memchr 2.8.3 supplies provenance and fixtures and is not timed across languages.\n\n",
+  )
+  builder.write_string(
+    "Inputs and views are prepared outside timing. `find`/`rfind` include one-off preprocessing; `reuse-find`/`reuse-rfind` prepare finders outside timing. Core has no explicit reusable Finder and performs the same public search in both groups. Iterator cases include finder/cursor creation and lazy consumption; counts use the optimized Matches.count operation. Public/implementation adapters, callback dispatch, and keep barriers remain timed. All indices count bytes and all adapters verify identical results before measurement.\n\n",
+  )
+  builder.write_string(
+    "Times below are **nanoseconds per call**. `*` marks CV >= 5% as possible noise. Bold indicates only the smallest mean, with no significance claim. Searches can stop early and receive no input-throughput estimate. Full byte counts report GiB/s using `bytes * 1e6 / mean_us / 2^30`. The recorded core runner calibrates near 100 ms, takes ten batch samples, and uses 5% winsorization; submicrosecond cases use 100000 calls per batch.\n\n",
+  )
+  builder.write_string(
+    "| OS | CPU | Architecture | Runner image |\n| --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| " +
+      cell(text(record, "os")) +
+      " | " +
+      cell(text(cpu, "model")) +
+      " | " +
+      cell(text(cpu, "architecture")) +
+      " | " +
+      cell(text(record, "image_os") + " " + text(record, "image_version")) +
+      " |\n",
+    )
+  }
+  builder.write_string("\n")
+  for record in records {
+    for backend in array(record, "backends") {
+      builder.write_string(
+        "<details>\n<summary>" +
+        cell(text(record, "os") + " / " + text(backend, "backend")) +
+        "</summary>\n\n",
+      )
+      let cases = index(backend)
+      write_table(
+        builder,
+        cases,
+        [
+          ("memchr1-short-hit", 15, 0),
+          ("memchr1-tail-hit", 65, 0),
+          ("memchr1-scan-miss", 4096, 0),
+          ("memchr3-scan-miss", 4096, 15),
+          ("memchr1-huge-hit", 1048576, 0),
+          ("memrchr1-huge-hit", 1048576, 0),
+        ],
+        [
+          ("own-scalar", "Scalar"),
+          ("own-simd", "SIMD"),
+          ("reference", "Reference"),
+          ("core", "Core"),
+        ],
+      )
+      write_table(
+        builder,
+        cases,
+        [
+          ("find-short-hit", 15, 0),
+          ("find-scan-miss", 4096, 0),
+          ("find-scan-hit", 4096, 1),
+          ("reuse-find-scan-hit", 4096, 1),
+          ("find-periodic-miss", 4096, 0),
+          ("reuse-find-wide-hit", 16384, 0),
+          ("rfind-scan-hit", 4096, 0),
+          ("reuse-rfind-long-hit", 8192, 0),
+        ],
+        [
+          ("own-scalar", "Scalar"),
+          ("own-simd", "SIMD"),
+          ("own-twoway", "Two-Way"),
+          ("core", "Core"),
+        ],
+      )
+      write_table(
+        builder,
+        cases,
+        [
+          ("count1-dense", 65536, 0),
+          ("count3-dense", 65536, 0),
+          ("iter1-dense", 4096, 0),
+          ("iter3-sparse", 4096, 0),
+          ("find-iter-overlap", 4096, 0),
+          ("rfind-iter-empty", 256, 0),
+        ],
+        [
+          ("own-scalar", "Scalar"),
+          ("own-simd", "SIMD"),
+          ("reference", "Reference"),
+        ],
+      )
+      builder.write_string(
+        "| Complete count | Scalar GiB/s | SIMD GiB/s | Reference GiB/s |\n| --- | ---: | ---: | ---: |\n",
+      )
+      for workload in ["count1-dense", "count3-dense"] {
+        builder.write_string("| " + workload + " |")
+        for variant in ["own-scalar", "own-simd", "reference"] {
+          let summary = cases[workload + ":" + variant + ":65536:0"]
+          builder.write_string(
+            " " +
+            decimal(65536.0 * 1000000 / number(summary, "mean") / 1073741824) +
+            (if number(summary, "std_dev_pct") >= 5 { "*" } else { "" }) +
+            " |",
+          )
+        }
+        builder.write_string("\n")
+      }
+      builder.write_string("\n</details>\n\n")
+    }
+  }
+  builder.write_string(
+    "## Reproduction\n\n```text\nmoon -C benchmarks test memchr --target all\nmoon run scripts/benchmark.mbtx memchr\nmoon run scripts/benchmark_report.mbtx --self-test\n```\n\nLocal rendering: `moon run scripts/benchmark_report.mbtx --local memchr _build/benchmarks/memchr/windows.json _build/memchr-report`. Publish only one verified three-OS/four-backend CI snapshot. The independent validator rejects partial inventories, mixed source revisions/runs/attempts, duplicate OS/backends, changed manifests/dependencies/needle lengths, and malformed sampling data. Raw CI artifacts are retained for 90 days. Actual toolchain versions and exact commands remain in the complete JSON.\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Replaces a field in a synthetic validator fixture without mutating shared JSON.
+fn replace_field(value : Json, key : String, replacement : Json) -> Json raise {
+  match value {
+    Object(fields) => {
+      let fields = fields.copy()
+      fields[key] = replacement
+      Json(fields)
+    }
+    _ => fail("Expected an object fixture")
+  }
+}
+
+///|
+/// Creates synthetic data used exclusively for validator regression tests.
+fn snapshot_fixture() -> Array[Json] raise {
+  let statistics : Json = {
+    "min": 0.5,
+    "max": 1.5,
+    "mean": 1,
+    "median": 1,
+    "sum": 10,
+    "variance": 0.01,
+    "std_dev": 0.1,
+    "std_dev_pct": 10,
+    "median_abs_dev": 0.1,
+    "median_abs_dev_pct": 10,
+    "quartiles": [0.75, 1, 1.25],
+    "iqr": 0.5,
+    "batch_size": 100,
+    "runs": 10,
+  }
+  let summaries : Array[Json] = []
+  for (name, _) in expected_names() {
+    summaries.push(replace_field(statistics, "name", Json(name)))
+  }
+  let backends : Array[Json] = []
+  for backend in ["native", "wasm", "wasm-gc", "js"] {
+    backends.push({
+      "backend": backend,
+      "time_unit": "microseconds",
+      "command": "moon -C benchmarks bench --target " +
+      backend +
+      " --release --no-parallelize -p justjavac/benchmarks/memchr",
+      "started_at_utc": "2026-11-25T00:00:00Z",
+      "finished_at_utc": "2026-11-25T00:01:00Z",
+      "summaries": Json(summaries),
+    })
+  }
+  let result : Array[Json] = []
+  for os in ["linux", "macos", "windows"] {
+    result.push({
+      "schema_version": 1,
+      "module": "justjavac/memchr",
+      "source": "github-actions",
+      "source_commit": "0123456789012345678901234567890123456789",
+      "repository": "justjavac/moonbit-simd",
+      "run_id": "123",
+      "run_attempt": "1",
+      "run_url": "https://github.com/justjavac/moonbit-simd/actions/runs/123",
+      "os": os,
+      "working_tree_dirty": false,
+      "cpu": { "model": "Synthetic fixture", "architecture": "fixture" },
+      "toolchain": "moonc fixture (2026-11-25)",
+      "node": "fixture",
+      "image_os": "fixture",
+      "image_version": "fixture",
+      "module_manifest": "name = \"justjavac/memchr\"\nversion = \"0.1.0\"\n",
+      "comparison_manifest": "justjavac/memchr@0.1.0\n",
+      "dependency_tree": "fixture",
+      "comparison_dependencies": [
+        {
+          "label": "core",
+          "package": "moonbitlang/core/bytes",
+          "version": "moonc fixture (2026-11-25)",
+          "license": "Apache-2.0",
+          "api": "find/rev_find",
+        },
+        {
+          "label": "reference",
+          "package": "justjavac/benchmarks/memchr",
+          "version": "0.1.0",
+          "license": "MIT",
+          "api": "independent reference",
+        },
+      ],
+      "ported_upstream": {
+        "package": "memchr",
+        "version": "2.8.3",
+        "revision": "5fdb40c054e1fff359a2f7bdf7f87a13b34b465d",
+        "crate_sha256": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+        "license": "MIT",
+        "timed": false,
+      },
+      "workload_metadata": expected_metadata(),
+      "backends": Json(backends),
+    })
+  }
+  result
+}
+
+///|
+/// Protects rejection rules with deliberate corruption of synthetic snapshots.
+fn self_test() -> Unit raise {
+  assert_eq(expected_names().length(), 370)
+  let snapshots = snapshot_fixture()
+  validate_snapshot(snapshots)
+  let rendered = report(snapshots, is_local=false)
+  assert_true(rendered.find("4440") is Some(_))
+  assert_true(rendered.find("1000") is Some(_))
+  assert_eq(cell("a|b\nc<d>"), "a\\|b c&lt;d&gt;")
+  let crlf = snapshots.copy()
+  crlf[1] = replace_field(
+    crlf[1],
+    "module_manifest",
+    Json(text(crlf[1], "module_manifest").replace_all(old="\n", new="\r\n")),
+  )
+  validate_snapshot(crlf)
+  let backends = array(snapshots[0], "backends")
+  let empty_dependencies : Array[Json] = []
+  for
+    (key, replacement) in [
+      ("source_commit", Json("1123456789012345678901234567890123456789")),
+      ("source", Json("local")),
+      ("run_id", Json("124")),
+      ("run_attempt", Json("2")),
+      ("repository", Json("different/repository")),
+      ("os", Json("macos")),
+      ("working_tree_dirty", Json(true)),
+      (
+        "module_manifest",
+        Json(text(snapshots[0], "module_manifest") + "changed\n"),
+      ),
+      ("comparison_manifest", Json("justjavac/memchr@0.1.0\nchanged\n")),
+      (
+        "ported_upstream",
+        replace_field(
+          field(snapshots[0], "ported_upstream"),
+          "revision",
+          Json("changed"),
+        ),
+      ),
+      (
+        "workload_metadata",
+        replace_field(expected_metadata(), "byte_needles", Json([0, 1, 3])),
+      ),
+      ("comparison_dependencies", Json(empty_dependencies)),
+      ("backends", Json(backends[:3].to_owned())),
+    ] {
+    let changed = snapshots.copy()
+    changed[0] = replace_field(changed[0], key, replacement)
+    try validate_snapshot(changed) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Corrupt snapshot accepted: " + key)
+    }
+  }
+  try validate_snapshot(snapshots[:2].to_owned()) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Partial CI snapshot accepted")
+  }
+  let summaries = array(backends[0], "summaries")
+  for
+    replacement in [
+      summaries[1],
+      replace_field(
+        summaries[0],
+        "name",
+        Json("memchr1-short-hit:own-simd:16:0"),
+      ),
+    ] {
+    let changed = summaries.copy()
+    changed[0] = replacement
+    try validate_inventory(changed) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Substituted inventory accepted")
+    }
+  }
+  for
+    (key, value) in [
+      ("mean", -1.0),
+      ("variance", -1.0),
+      ("runs", 9.0),
+      ("batch_size", 0.5),
+      ("sum", 11.0),
+      ("iqr", -1.0),
+    ] {
+    try
+      validate_statistics(replace_field(summaries[0], key, Json(value)))
+    catch {
+      _ => ()
+    } noraise {
+      _ => fail("Invalid statistic accepted: " + key)
+    }
+  }
+  let local_record = replace_field(
+    replace_field(
+      replace_field(
+        replace_field(snapshots[0], "source", Json("local")),
+        "run_id",
+        Json(""),
+      ),
+      "run_url",
+      Json(""),
+    ),
+    "run_attempt",
+    Json(""),
+  )
+  validate_local(local_record)
+  let fragment = replace_field(local_record, "backends", Json([backends[0]]))
+  validate_local(fragment, fragment=true)
+  let fragments = backends.map(backend => {
+    replace_field(local_record, "backends", Json([backend]))
+  })
+  validate_local(merge_local(fragments))
+  let duplicated = fragments.copy()
+  duplicated[1] = fragments[0]
+  try merge_local(duplicated) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Duplicate local fragment backend accepted")
+  }
+  let mixed = fragments.copy()
+  mixed[1] = replace_field(
+    mixed[1],
+    "source_commit",
+    Json("1123456789012345678901234567890123456789"),
+  )
+  try merge_local(mixed) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Mixed local fragment source accepted")
+  }
+  try validate_local(fragment) catch {
+    _ => ()
+  } noraise {
+    _ => fail("A local fragment must not render as a complete report")
+  }
+  assert_true(
+    report([local_record], is_local=true).find("Local measurements") is Some(_),
+  )
+  try validate_snapshot([local_record, snapshots[1], snapshots[2]]) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Local data accepted as CI")
+  }
+}
+
+///|
+/// Joins local backend fragments only when all source and runner metadata agrees.
+fn merge_local(fragments : Array[Json]) -> Json raise {
+  guard fragments.length() == 4 else { fail("Expected four local fragments") }
+  let first = fragments[0]
+  let backends : Array[Json] = []
+  for fragment in fragments {
+    validate_local(fragment, fragment=true)
+    for
+      key in [
+        "source_commit", "repository", "os", "working_tree_dirty", "module_manifest",
+        "comparison_manifest", "comparison_dependencies", "ported_upstream", "workload_metadata",
+        "toolchain", "node", "cpu", "image_os", "image_version",
+      ] {
+      guard field(fragment, key) == field(first, key) else {
+        fail("Mixed local fragment metadata: " + key)
+      }
+    }
+    backends.push(array(fragment, "backends")[0])
+  }
+  let result = replace_field(first, "backends", Json(backends))
+  validate_local(result)
+  result
+}
+
+///|
+/// Writes validated complete CI snapshots or explicitly LOCAL-named artifacts.
+async fn main {
+  let arguments = @env.args()
+  if arguments.length() == 2 && arguments[1] == "--self-test" {
+    self_test()
+    println("memchr benchmark report self-test passed")
+    return
+  }
+  if arguments.length() == 4 && arguments[1] == "--merge-local" {
+    let directory = arguments[2]
+    let os = arguments[3]
+    guard ["linux", "macos", "windows"].contains(os) else {
+      fail("Expected a local OS label")
+    }
+    let fragments : Array[Json] = []
+    for backend in ["native", "wasm", "wasm-gc", "js"] {
+      fragments.push(
+        @json.parse(
+          @fs.read_text(directory + "/" + os + "-" + backend + ".json"),
+        ),
+      )
+    }
+    let record = merge_local(fragments)
+    guard text(record, "os") == os else { fail("Mixed local fragment OS") }
+    @fs.write_text(directory + "/" + os + ".json", record.stringify(indent=2))
+    println("Merged four verified local memchr backend fragments")
+    return
+  }
+  let is_local = arguments.length() == 4 && arguments[1] == "--local"
+  guard is_local || arguments.length() == 3 else {
+    fail("Usage: memchr_benchmark_report.mbtx [--local] <input> <output>")
+  }
+  let input = arguments[if is_local { 2 } else { 1 }]
+  let output = arguments[if is_local { 3 } else { 2 }]
+  let records : Array[Json] = []
+  if is_local {
+    records.push(@json.parse(@fs.read_text(input)))
+  } else {
+    for os in ["linux", "macos", "windows"] {
+      records.push(@json.parse(@fs.read_text(input + "/" + os + ".json")))
+    }
+  }
+  if is_local {
+    validate_local(records[0])
+  } else {
+    validate_snapshot(records)
+  }
+  let markdown = report(records, is_local~)
+  @fs.mkdir(output, recursive=true, allow_existing=true)
+  let prefix = if is_local { "LOCAL-" } else { "" }
+  @fs.write_text(output + "/" + prefix + "BENCHMARK.md", markdown)
+  @fs.write_text(
+    output + "/" + prefix + "BENCHMARK-DATA.json",
+    Json(records).stringify(indent=2),
+  )
+  println(
+    "Generated " + prefix + "BENCHMARK.md and complete memchr JSON in " + output,
+  )
+}
