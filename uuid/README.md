@@ -196,6 +196,13 @@ moon run scripts/benchmark.mbtx uuid
 exact cases per backend. Required input conversion and result adaptation stay
 inside the timer. Unsupported public operations are omitted explicitly.
 
+In the selected CI snapshot, linear-memory Wasm SIMD parsing outperforms our
+scalar path on all three systems. Native x86 hyphenated parsing favors scalar;
+the ARM64 macOS runner favors an explicit SIMD request. JavaScript parsing and
+formatting trail the fastest competing packages in this snapshot. Whole public
+operations include representation, allocation, and conversion costs; compare
+our scalar and SIMD requests to assess this port's vector benefit.
+
 One complete CI snapshot covers all twelve OS/backend environments at one
 source revision, run, and attempt. Its JSON preserves every unrounded statistic
 and length/offset label. Local measurements remain explicitly local. Ten
