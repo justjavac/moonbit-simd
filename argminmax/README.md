@@ -237,7 +237,7 @@ Masked cases cover every bit offset through 23, partial bitmap views, dense and
 sparse validity, all nulls/NaNs, valid/null NaNs, and overflow-safe validation.
 Checked documentation and private lane/index tests also run in the suite.
 
-The [native CI exports](https://github.com/justjavac/moonbit-simd/actions/runs/45541951400)
+The [native CI exports](https://github.com/justjavac/moonbit-simd/actions/runs/45552176880)
 on 2026-11-25 report **345/352 covered production lines (98.01%)** on Linux,
 macOS, and Windows. Six uncovered lines belong to automatic vector selection and
 scalar-only backend fallbacks; those paths run in the corresponding correctness
