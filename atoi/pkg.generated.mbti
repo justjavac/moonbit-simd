@@ -1,0 +1,80 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/atoi"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn[T : Parse] parse(BytesView, skip_zeroes? : Bool, skip_plus? : Bool, simd? : Bool) -> T raise ParseError
+
+pub fn[T : ParseNeg] parse_neg(BytesView, skip_zeroes? : Bool, simd? : Bool) -> T raise ParseError
+
+pub fn[T : Parse] parse_pos(BytesView, skip_zeroes? : Bool, simd? : Bool) -> T raise ParseError
+
+pub fn[T : Parse] parse_prefix(BytesView, skip_zeroes? : Bool, skip_plus? : Bool, simd? : Bool) -> (T, Int32) raise ParseError
+
+pub fn[T : ParseNeg] parse_prefix_neg(BytesView, skip_zeroes? : Bool, simd? : Bool) -> (T, Int32) raise ParseError
+
+pub fn[T : Parse] parse_prefix_pos(BytesView, skip_zeroes? : Bool, simd? : Bool) -> (T, Int32) raise ParseError
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror ParseError {
+  Empty
+  Size(Int32, BytesView)
+  Overflow(BytesView)
+  Invalid64(UInt64, Int32, BytesView)
+  Invalid128(UInt128, Int32, BytesView)
+}
+
+// Types and methods
+#derive(Eq, @debug.Debug)
+pub struct Int128 {
+  // private fields
+}
+pub fn Int128::from_bits(UInt128) -> Self
+pub fn Int128::is_negative(Self) -> Bool
+pub fn Int128::to_bits(Self) -> UInt128
+pub fn Int128::to_string(Self) -> String
+pub impl Parse for Int128
+pub impl ParseNeg for Int128
+
+#derive(Eq, @debug.Debug)
+pub struct Int8 {
+  // private fields
+}
+pub fn Int8::to_int(Self) -> Int32
+pub fn Int8::to_string(Self) -> String
+pub impl Parse for Int8
+pub impl ParseNeg for Int8
+
+#derive(Eq, @debug.Debug)
+pub struct UInt128 {
+  // private fields
+}
+pub fn UInt128::from_words(high~ : UInt64, low~ : UInt64) -> Self
+pub fn UInt128::to_string(Self) -> String
+pub fn UInt128::to_words(Self) -> (UInt64, UInt64)
+pub impl Parse for UInt128
+
+// Type aliases
+
+// Traits
+pub(open) trait Parse {
+  fn parse_decimal(BytesView, positive_only~ : Bool, prefix~ : Bool, skip_zeroes~ : Bool, skip_plus~ : Bool, simd~ : Bool) -> (Self, Int32) raise ParseError
+}
+pub impl Parse for Byte
+pub impl Parse for Int32
+pub impl Parse for Int16
+pub impl Parse for Int64
+pub impl Parse for UInt32
+pub impl Parse for UInt16
+pub impl Parse for UInt64
+
+pub(open) trait ParseNeg {
+  fn parse_negative_decimal(BytesView, prefix~ : Bool, skip_zeroes~ : Bool, simd~ : Bool) -> (Self, Int32) raise ParseError
+}
+pub impl ParseNeg for Int32
+pub impl ParseNeg for Int16
+pub impl ParseNeg for Int64

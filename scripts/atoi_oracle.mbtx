@@ -1,0 +1,382 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/env",
+  "moonbitlang/core/encoding/utf8",
+}
+----
+
+///|
+/// Describes a portable overlapping case for both upstream Rust configurations.
+priv struct Case {
+  kind : String
+  operation : String
+  bytes : Bytes
+  skip_zeroes : Bool
+  skip_plus : Bool
+}
+
+///|
+/// Formats bytes losslessly for the Rust input protocol or a MoonBit literal.
+fn hex(bytes : BytesView, escaped~ : Bool = false) -> String {
+  let alphabet = "0123456789abcdef"
+  let output = StringBuilder()
+  for byte in bytes {
+    if escaped {
+      output.write_string("\\x")
+    }
+    let high = byte.to_int() >> 4
+    let low = byte.to_int() & 15
+    output.write_string(alphabet[high:high + 1].to_owned())
+    output.write_string(alphabet[low:low + 1].to_owned())
+  }
+  output.to_string()
+}
+
+///|
+/// Corrects only upstream's documented omission of an accepted plus prefix byte.
+fn normalized_prefix(case : Case, result : String) -> String raise {
+  if case.operation == "prefix" &&
+    case.skip_plus &&
+    case.bytes is [b'+', ..] &&
+    result.has_prefix("ok:") {
+    let parts = result.split(":").map(part => part.to_owned()).to_array()
+    guard parts.length() == 3 else { fail("Invalid Rust prefix record") }
+    let mut count = 0
+    for unit in parts[2] {
+      guard unit >= '0' && unit <= '9' else { fail("Invalid consumed size") }
+      count = count * 10 + unit.to_int() - 48
+    }
+    "ok:" + parts[1] + ":" + (count + 1).to_string()
+  } else {
+    result
+  }
+}
+
+///|
+/// Captures a checked child command while preserving its complete build log.
+async fn capture(command : @shell.Cmd, log : String) -> String {
+  let output = command.output(max_output_bytes=8388608)
+  @fs.write_text(log, output.stdout() + output.stderr())
+  guard output.exit_code() == 0 else {
+    fail("Oracle command failed; see " + log)
+  }
+  output.stdout()
+}
+
+///|
+/// Regenerates fixed upstream fixtures using pinned source and two CPU configurations.
+async fn main {
+  let directory = "_build/atoi-oracle"
+  @fs.mkdir(directory + "/src", recursive=true, allow_existing=true)
+  let cases : Array[Case] = []
+  let mut seed = 0xA7015EEDUL
+  for
+    (kind, maximum, overflow, minimum, mask) in [
+      ("u8", "255", "256", "", 255UL),
+      ("i8", "127", "128", "128", 127UL),
+      ("u16", "65535", "65536", "", 65535UL),
+      ("i16", "32767", "32768", "32768", 32767UL),
+      ("u32", "4294967295", "4294967296", "", 4294967295UL),
+      ("i32", "2147483647", "2147483648", "2147483648", 2147483647UL),
+      (
+        "u64", "18446744073709551615", "18446744073709551616", "", 0xFFFFFFFFFFFFFFFFUL,
+      ),
+      (
+        "i64", "9223372036854775807", "9223372036854775808", "9223372036854775808",
+        0x7FFFFFFFFFFFFFFFUL,
+      ),
+      (
+        "u128", "340282366920938463463374607431768211455", "340282366920938463463374607431768211456",
+        "", 0xFFFFFFFFFFFFFFFFUL,
+      ),
+      (
+        "i128", "170141183460469231731687303715884105727", "170141183460469231731687303715884105728",
+        "170141183460469231731687303715884105728", 0x7FFFFFFFFFFFFFFFUL,
+      ),
+    ] {
+    let operations = if minimum == "" {
+      ["parse", "pos", "prefix", "prefix_pos"]
+    } else {
+      ["parse", "pos", "neg", "prefix", "prefix_pos", "prefix_neg"]
+    }
+    for
+      bytes in [
+        b"", b"0", b"42", b"42tail", b"42\xFF", b"+42", b"-42", b"\xFF", b"++1",
+        b"+-1",
+      ] {
+      for operation in operations {
+        for skip_zeroes in [false, true] {
+          for skip_plus in [false, true] {
+            cases.push({ kind, operation, bytes, skip_zeroes, skip_plus, })
+          }
+        }
+      }
+    }
+    for text in [maximum, overflow] {
+      for operation in ["parse", "pos", "prefix", "prefix_pos"] {
+        cases.push({
+          kind,
+          operation,
+          bytes: @utf8.encode(text),
+          skip_zeroes: false,
+          skip_plus: false,
+        })
+      }
+    }
+    if minimum != "" {
+      cases.push({
+        kind,
+        operation: "parse",
+        bytes: @utf8.encode("-" + minimum),
+        skip_zeroes: false,
+        skip_plus: false,
+      })
+      cases.push({
+        kind,
+        operation: "neg",
+        bytes: @utf8.encode(minimum),
+        skip_zeroes: false,
+        skip_plus: false,
+      })
+      cases.push({
+        kind,
+        operation: "prefix_neg",
+        bytes: @utf8.encode(minimum + "tail"),
+        skip_zeroes: false,
+        skip_plus: false,
+      })
+    }
+    for _ in 0..<6 {
+      seed = seed * 6364136223846793005UL + 1442695040888963407UL
+      let bytes = @utf8.encode((seed & mask).to_string())
+      for operation in operations {
+        for suffix in [b"", b"tail"] {
+          cases.push({
+            kind,
+            operation,
+            bytes: bytes + suffix,
+            skip_zeroes: false,
+            skip_plus: false,
+          })
+        }
+      }
+    }
+    for operation in operations {
+      // The long-zero case uses the shared unbounded-zero option. Backend-
+      // dependent over-budget behavior is covered separately by port tests.
+      cases.push({
+        kind,
+        operation,
+        bytes: Bytes::make(80, b'0') + b"42tail",
+        skip_zeroes: true,
+        skip_plus: false,
+      })
+    }
+  }
+  let input = StringBuilder()
+  for case in cases {
+    input.write_string(
+      case.kind +
+      "\t" +
+      case.operation +
+      "\t" +
+      (if case.skip_zeroes { "1" } else { "0" }) +
+      "\t" +
+      (if case.skip_plus { "1" } else { "0" }) +
+      "\t" +
+      hex(case.bytes) +
+      "\n",
+    )
+  }
+  @fs.write_text(directory + "/input.tsv", input.to_string())
+  let manifest =
+    #|[package]
+    #|name = "moonbit-atoi-oracle"
+    #|version = "0.0.0"
+    #|edition = "2021"
+    #|[dependencies]
+    #|atoi_simd = "=0.18.1"
+    #|debug_unsafe = "=0.1.4"
+    #|rustversion = "=1.0.23"
+  @fs.write_text(directory + "/Cargo.toml", manifest)
+  let rust =
+    #|use std::{env, fs, fmt::Display};
+    #|use atoi_simd::{Parse, ParseNeg, AtoiSimdError};
+    #|fn error(e: AtoiSimdError<'_>) -> String {
+    #|    match e {
+    #|        AtoiSimdError::Empty => "empty".into(),
+    #|        AtoiSimdError::Size(..) => "size".into(),
+    #|        AtoiSimdError::Overflow(..) => "overflow".into(),
+    #|        AtoiSimdError::Invalid64(v, i, _) => format!("invalid:{v}:{i}"),
+    #|        AtoiSimdError::Invalid128(v, i, _) => format!("invalid:{v}:{i}"),
+    #|    }
+    #|}
+    #|fn full<T: Display>(r: Result<T, AtoiSimdError<'_>>) -> String {
+    #|    r.map(|v| format!("ok:{v}")).unwrap_or_else(error)
+    #|}
+    #|fn prefix<T: Display>(r: Result<(T, usize), AtoiSimdError<'_>>) -> String {
+    #|    r.map(|(v,i)| format!("ok:{v}:{i}")).unwrap_or_else(error)
+    #|}
+    #|fn positive<T: Parse + Display, const Z: bool, const P: bool>(s: &[u8], op: &str) -> String {
+    #|    match op {
+    #|        "parse" => full(atoi_simd::parse::<T,Z,P>(s)),
+    #|        "pos" => full(atoi_simd::parse_pos::<T,Z>(s)),
+    #|        "prefix" => prefix(atoi_simd::parse_prefix::<T,Z,P>(s)),
+    #|        "prefix_pos" => prefix(atoi_simd::parse_prefix_pos::<T,Z>(s)),
+    #|        _ => panic!("unknown positive operation"),
+    #|    }
+    #|}
+    #|fn signed<T: Parse + ParseNeg + Display, const Z: bool, const P: bool>(s: &[u8], op: &str) -> String {
+    #|    match op {
+    #|        "neg" => full(atoi_simd::parse_neg::<T,Z>(s)),
+    #|        "prefix_neg" => prefix(atoi_simd::parse_prefix_neg::<T,Z>(s)),
+    #|        _ => positive::<T,Z,P>(s,op),
+    #|    }
+    #|}
+    #|macro_rules! options {
+    #|    ($f:ident, $t:ty, $s:expr, $op:expr, $z:expr, $p:expr) => {
+    #|        match ($z,$p) {
+    #|            (false,false) => $f::<$t,false,false>($s,$op),
+    #|            (false,true) => $f::<$t,false,true>($s,$op),
+    #|            (true,false) => $f::<$t,true,false>($s,$op),
+    #|            (true,true) => $f::<$t,true,true>($s,$op),
+    #|        }
+    #|    }
+    #|}
+    #|fn main() {
+    #|    eprintln!("upstream 0.18.1; avx2={}; neon={}", cfg!(target_feature="avx2"), cfg!(target_feature="neon"));
+    #|    let input = fs::read_to_string(env::args().nth(1).unwrap()).unwrap();
+    #|    for line in input.lines() {
+    #|        let p: Vec<_> = line.split('\t').collect();
+    #|        let s: Vec<u8> = p[4].as_bytes().chunks_exact(2).map(|c| {
+    #|            u8::from_str_radix(std::str::from_utf8(c).unwrap(),16).unwrap()
+    #|        }).collect();
+    #|        let z = p[2] == "1"; let plus = p[3] == "1";
+    #|        let result = match p[0] {
+    #|            "u8" => options!(positive,u8,&s,p[1],z,plus),
+    #|            "i8" => options!(signed,i8,&s,p[1],z,plus),
+    #|            "u16" => options!(positive,u16,&s,p[1],z,plus),
+    #|            "i16" => options!(signed,i16,&s,p[1],z,plus),
+    #|            "u32" => options!(positive,u32,&s,p[1],z,plus),
+    #|            "i32" => options!(signed,i32,&s,p[1],z,plus),
+    #|            "u64" => options!(positive,u64,&s,p[1],z,plus),
+    #|            "i64" => options!(signed,i64,&s,p[1],z,plus),
+    #|            "u128" => options!(positive,u128,&s,p[1],z,plus),
+    #|            "i128" => options!(signed,i128,&s,p[1],z,plus),
+    #|            _ => panic!("unknown integer"),
+    #|        };
+    #|        println!("{result}");
+    #|    }
+    #|}
+  @fs.write_text(directory + "/src/main.rs", rust)
+  let executable = if @env.get_env_var("OS") == Some("Windows_NT") {
+    "moonbit-atoi-oracle.exe"
+  } else {
+    "moonbit-atoi-oracle"
+  }
+  let builds : Array[Array[String]] = []
+  for
+    (label, flags) in [
+      ("baseline", "-C target-cpu=generic"),
+      ("native", "-C target-cpu=native"),
+    ] {
+    let target = directory + "/" + label
+    let _ = capture(
+      @shell.Cmd(
+        "cargo",
+        [
+          "build",
+          "--release",
+          "--manifest-path",
+          directory + "/Cargo.toml",
+          "--target-dir",
+          target,
+        ],
+        env={ "RUSTFLAGS": flags },
+      ),
+      directory + "/" + label + "-build.log",
+    )
+    let output = capture(
+      @shell.Cmd(target + "/release/" + executable, [directory + "/input.tsv"]),
+      directory + "/" + label + "-output.log",
+    )
+    let records = output
+      .trim()
+      .split("\n")
+      .map(line => line.trim().to_owned())
+      .to_array()
+    guard records.length() == cases.length() else {
+      fail("Incomplete Rust oracle results")
+    }
+    builds.push(records)
+  }
+  let builder = StringBuilder()
+  let version = capture(
+      @shell.Cmd("rustc", ["--version"]),
+      directory + "/rust-version.log",
+    )
+    .trim()
+    .to_owned()
+  builder.write_string("// Generated by moon run scripts/atoi_oracle.mbtx.\n")
+  builder.write_string(
+    "// atoi_simd 0.18.1, Git f0952f7bb71ee581dcc2871841f9b2dbd241bd7e.\n",
+  )
+  builder.write_string(
+    "// Oracle dependencies: debug_unsafe 0.1.4, rustversion 1.0.23.\n",
+  )
+  builder.write_string(
+    "// " +
+    version +
+    "; baseline and target-cpu=native agree after plus-count correction.\n\n",
+  )
+  builder.write_string(
+    "///|\n/// Replays portable overlapping upstream results, with only plus counts corrected.\n",
+  )
+  builder.write_string(
+    "fn upstream_vectors() -> Array[(String, String, Bool, Bool, Bytes, String)] {\n  [\n",
+  )
+  for index, case in cases {
+    let baseline = normalized_prefix(case, builds[0][index])
+    let native = normalized_prefix(case, builds[1][index])
+    guard baseline == native else {
+      fail(
+        "Upstream configurations disagree: " +
+        case.kind +
+        " " +
+        case.operation +
+        " " +
+        hex(case.bytes) +
+        "; baseline=" +
+        baseline +
+        "; native=" +
+        native,
+      )
+    }
+    builder.write_string(
+      "    (\"" +
+      case.kind +
+      "\", \"" +
+      case.operation +
+      "\", " +
+      case.skip_zeroes.to_string() +
+      ", " +
+      case.skip_plus.to_string() +
+      ", b\"" +
+      hex(case.bytes, escaped=true) +
+      "\", \"" +
+      baseline +
+      "\"),\n",
+    )
+  }
+  builder.write_string("  ]\n}\n")
+  @fs.write_text("atoi/upstream_vectors_test.mbt", builder.to_string())
+  println(
+    "Generated " +
+    cases.length().to_string() +
+    " agreeing upstream cases; raw logs and Cargo.lock are under " +
+    directory,
+  )
+}

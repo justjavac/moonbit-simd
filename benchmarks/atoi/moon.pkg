@@ -1,0 +1,9 @@
+import {
+  "justjavac/atoi" @ours,
+  "moonbitlang/core/bench",
+  "moonbitlang/core/bigint",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

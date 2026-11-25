@@ -86,6 +86,105 @@ fn throughput(workload : String, bytes : String, mean : Double) -> String raise 
 }
 
 ///|
+/// Defines every Base64 case and the actual input/output lengths behind its binary-size label.
+fn expected_base64_cases() -> Map[String, Json] {
+  let cases : Map[String, Json] = Map([])
+  fn add(
+    workload : String,
+    implementation : String,
+    variant : String,
+    length : Int32,
+    padding : Bool,
+    offset : Int32,
+  ) -> Unit {
+    let tail = length % 3
+    let encoded = length / 3 * 4 +
+      (if tail == 0 { 0 } else if padding { 4 } else { tail + 1 })
+    let encoding = workload.has_prefix("encode-")
+    let text_input = workload == "decode-" + variant
+    cases["\{workload}:\{implementation}:\{length}:\{offset}"] = {
+      "binary_bytes": length,
+      "input_bytes": if encoding {
+        length
+      } else {
+        encoded
+      },
+      "input_code_units": if text_input {
+        encoded
+      } else {
+        0
+      },
+      "output_bytes": if encoding {
+        encoded
+      } else if workload.has_prefix("check-") {
+        0
+      } else {
+        length
+      },
+      "input_offset": offset,
+      "offset_unit": if text_input {
+        "utf16-code-units"
+      } else {
+        "bytes"
+      },
+      "variant": variant,
+    }
+  }
+  for variant in ["standard", "standard-no-pad", "url-safe", "url-safe-no-pad"] {
+    let padding = variant == "standard" || variant == "url-safe"
+    let sizes = if variant == "standard" {
+      [0, 1, 2, 3, 16, 64, 4096, 1048576]
+    } else {
+      [2, 4096]
+    }
+    for length in sizes {
+      for
+        implementation in [
+          "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+        ] {
+        if implementation != "kujirahand" || variant == "standard" {
+          if implementation != "kujirahand" || length <= 4096 {
+            add(
+              "encode-" + variant,
+              implementation,
+              variant,
+              length,
+              padding,
+              0,
+            )
+          }
+          add("decode-" + variant, implementation, variant, length, padding, 0)
+        }
+      }
+    }
+  }
+  for length in [64, 1048576] {
+    for
+      implementation in [
+        "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+      ] {
+      if implementation != "kujirahand" || length <= 4096 {
+        add("encode-standard", implementation, "standard", length, true, 1)
+      }
+      add("decode-standard", implementation, "standard", length, true, 1)
+    }
+    for implementation in ["own-scalar", "own-simd", "moonbase"] {
+      add("decode-bytes-standard", implementation, "standard", length, true, 0)
+    }
+    for implementation in ["own-scalar", "own-simd"] {
+      for
+        workload in [
+          "encode-into-standard", "decode-into-standard", "decode-inplace-standard",
+          "check-standard",
+        ] {
+        add(workload, implementation, "standard", length, true, 0)
+      }
+    }
+  }
+  cases
+}
+
+///|
 /// Validates nonempty unique cases and complete timing statistics before reporting.
 fn validate_backend(value : Json, package_dir : String) -> Unit raise {
   let backend = text(value, "backend")
@@ -106,12 +205,32 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
   if package_dir == "utf8" {
     validate_utf8_inventory(summaries)
   }
+  if package_dir == "base64" {
+    validate_base64_inventory(summaries)
+  }
+  if package_dir == "atoi" {
+    validate_atoi_inventory(summaries)
+    guard text(value, "command").has_prefix(
+        "moon -C benchmarks bench --target " + backend,
+      ) &&
+      text(value, "command").find("--release --no-parallelize") is Some(_) &&
+      text(value, "started_at_utc").length() == 20 &&
+      text(value, "finished_at_utc").length() == 20 &&
+      text(value, "started_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc") >= text(value, "started_at_utc") else {
+      fail("Missing integer release command or UTC timestamps")
+    }
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
     let _ = case_parts(summary)
     guard !names.contains(name) else { fail("Duplicate benchmark: \{name}") }
     names[name] = ()
+    if package_dir == "atoi" {
+      validate_atoi_statistics(summary)
+    }
     let mean = number(summary, "mean")
     let minimum = number(summary, "min")
     let maximum = number(summary, "max")
@@ -200,6 +319,80 @@ fn validate_url_inventory(summaries : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Rejects missing, substituted, or incorrectly sized Base64 cases.
+fn validate_base64_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_base64_cases()
+  guard summaries.length() == expected.length() && expected.length() == 200 else {
+    fail("Expected 200 Base64 benchmark cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.get(name) is Some(Object(metadata)) else {
+      fail("Unexpected or duplicate Base64 case: \{name}")
+    }
+    expected.remove(name)
+    for (key, value) in metadata {
+      guard field(summary, key) == value else {
+        fail("Incorrect Base64 metadata: \{name}/\{key}")
+      }
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete Base64 case inventory") }
+}
+
+///|
+/// Identifies the bundled core revision through its compiler build, excluding host paths.
+fn compiler_build(record : Json) -> String raise {
+  for line in text(record, "toolchain").split("\n") {
+    if line.has_prefix("moonc ") {
+      let pieces = line
+        .split(" ")
+        .filter(part => part != "")
+        .map(part => part.to_owned())
+        .to_array()
+      guard pieces.length() >= 3 else { fail("Missing compiler build") }
+      return pieces[:3].to_owned().join(" ")
+    }
+  }
+  fail("Missing MoonBit compiler provenance")
+}
+
+///|
+/// Pins the Base64 comparison APIs and licenses expected by this report revision.
+fn base64_dependencies() -> Array[Json] {
+  [
+    {
+      "label": "core",
+      "package": "moonbitlang/core/encoding/base64",
+      "version": "toolchain-bundled",
+      "license": "Apache-2.0",
+      "api": "encode(BytesView), decode(StringView)",
+    },
+    {
+      "label": "gmlewis",
+      "package": "gmlewis/base64",
+      "version": "0.16.15",
+      "license": "Apache-2.0",
+      "api": "std/url_encode2str(FixedArray), std/url_decode2bytes(String)",
+    },
+    {
+      "label": "kujirahand",
+      "package": "kujirahand/base64",
+      "version": "0.1.1",
+      "license": "Apache-2.0",
+      "api": "encode_bytes(Bytes), decode_bytes(String)",
+    },
+    {
+      "label": "moonbase",
+      "package": "moonbitstack/moonbase/base64",
+      "version": "0.5.1",
+      "license": "Apache-2.0",
+      "api": "encode(BytesView), decode(StringView)/decode_bytes(BytesView), strict=true",
+    },
+  ]
+}
+
+///|
 /// Rejects local measurements and mixed CI revisions or attempts in a published snapshot.
 fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise {
   guard records.length() == 3 else {
@@ -215,6 +408,21 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
   let canonical_cases : Map[String, Unit] = Map([])
   for record in records {
     let os = text(record, "os")
+    if package_dir == "atoi" {
+      validate_atoi_metadata(record)
+      guard text(record, "run_attempt") != "" &&
+        @string.parse_int(text(record, "run_attempt")) > 0 &&
+        field(record, "ported_upstream") == field(first, "ported_upstream") &&
+        text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+        text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+        fail(
+          "Mixed integer source manifests, upstream revision, or missing CI attempt",
+        )
+      }
+    }
+
     guard ["linux", "macos", "windows"].contains(os) &&
       !operating_systems.contains(os) else {
       fail("Invalid or duplicate operating system: \{os}")
@@ -238,6 +446,18 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
       array(first, "comparison_dependencies") else {
       fail("Mixed comparison dependency versions")
     }
+    if package_dir == "base64" {
+      guard array(record, "comparison_dependencies") == base64_dependencies() else {
+        fail("Unexpected Base64 comparison dependencies")
+      }
+      guard compiler_build(record) == compiler_build(first) &&
+        text(record, "module_manifest").replace_all(old="\r", new="") ==
+        text(first, "module_manifest").replace_all(old="\r", new="") &&
+        text(record, "comparison_manifest").replace_all(old="\r", new="") ==
+        text(first, "comparison_manifest").replace_all(old="\r", new="") else {
+        fail("Mixed Base64 toolchains or manifests")
+      }
+    }
     let backends = array(record, "backends")
     guard backends.length() == 4 else { fail("Missing backend results") }
     let backend_names : Map[String, Unit] = Map([])
@@ -246,7 +466,7 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
       guard !backend_names.contains(name) else { fail("Duplicate backend") }
       backend_names[name] = ()
       validate_backend(backend, package_dir)
-      if package_dir == "url" {
+      if package_dir == "url" || package_dir == "base64" {
         let summaries = array(backend, "summaries")
         if canonical_cases.is_empty() {
           for summary in summaries {
@@ -255,7 +475,7 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
         } else {
           for summary in summaries {
             guard canonical_cases.contains(text(summary, "name")) else {
-              fail("Mixed URL case inventories")
+              fail("Mixed benchmark case inventories")
             }
           }
         }
@@ -399,11 +619,17 @@ fn highlights(builder : StringBuilder, records : Array[Json]) -> Unit raise {
 /// Builds a concise, information-rich report backed by a complete JSON snapshot.
 fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
+  if package_dir == "atoi" {
+    return atoi_report(records)
+  }
   if package_dir == "url" {
     return url_report(records)
   }
   if package_dir == "utf8" {
     return utf8_report(records)
+  }
+  if package_dir == "base64" {
+    return base64_report(records)
   }
   let first = records[0]
   let revision = text(first, "source_commit")
@@ -606,6 +832,354 @@ fn url_report(records : Array[Json]) -> String raise {
     "Run `moon -C benchmarks test --target all`, then `moon run scripts/benchmark.mbtx url` for local measurements. CI uses the same release commands sequentially. The report generator rejects local data, incomplete case sets, mixed revisions/runs/attempts, and changed dependency versions. Raw logs are retained for 90 days; the committed JSON preserves the complete snapshot.\n\n</details>\n",
   )
   builder.to_string()
+}
+
+///|
+/// Summarizes native scalar/vector ratios for the complete public Base64 operations.
+fn base64_highlights(
+  builder : StringBuilder,
+  records : Array[Json],
+) -> Unit raise {
+  builder.write_string(
+    "## Key findings\n\nOne MiB binary payload, native public allocating APIs; ratios are SIMD-request throughput divided by scalar throughput:\n\n",
+  )
+  for record in records {
+    let native = array(record, "backends")
+      .search_by(value => text(value, "backend") == "native")
+      .unwrap()
+    let values = index(array(record, "backends")[native])
+    let encode_scalar = number(
+      values["encode-standard:own-scalar:1048576:0"],
+      "mean",
+    )
+    let encode_simd = number(
+      values["encode-standard:own-simd:1048576:0"],
+      "mean",
+    )
+    let decode_scalar = number(
+      values["decode-standard:own-scalar:1048576:0"],
+      "mean",
+    )
+    let decode_simd = number(
+      values["decode-standard:own-simd:1048576:0"],
+      "mean",
+    )
+    builder.write_string(
+      "- **\{text(record, "os")}:** encoding \{decimal(encode_scalar / encode_simd)}x; string decoding \{decimal(decode_scalar / decode_simd)}x.\n",
+    )
+  }
+  builder.write_string(
+    "\nA ratio below one indicates lower SIMD-request throughput. Defaults select scalar on native/Wasm GC/JS and vectors on Wasm; explicit requests are preserved in every comparison. Native lowering of several V128 operations uses core scalar helpers on this toolchain. Revalidate this choice after compiler upgrades.\n\n",
+  )
+}
+
+///|
+/// Renders representative Base64 comparisons while retaining every case in the JSON snapshot.
+fn base64_report(records : Array[Json]) -> String raise {
+  let first = records[0]
+  let revision = text(first, "source_commit")
+  let repository = text(first, "repository")
+  let builder = StringBuilder()
+  builder.write_string("# Base64 cross-library performance\n\n")
+  builder.write_string(
+    "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{repository}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
+  )
+  builder.write_string(
+    "Complete snapshot: **3 operating systems x 4 backends x 200 cases = 2400 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves every unrounded statistic, exact input/output length, and runner/toolchain record.\n\n",
+  )
+  base64_highlights(builder, records)
+  builder.write_string(
+    "## Implementations\n\n| Label | Package / version | Public API measured |\n| --- | --- | --- |\n| ours scalar / SIMD request | justjavac/base64 / source above | encode_to_string, decode_string; explicit simd=false/true |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| \{cell(text(dependency, "label"))} | \{cell(text(dependency, "package"))} / \{cell(text(dependency, "version"))} | \{cell(text(dependency, "api"))} |\n",
+    )
+  }
+  builder.write_string(
+    "\n## Method and limits\n\n- Corpus construction and independent per-bit reference encoding are outside timed callbacks. All public adapters pass identical encoded strings and decoded bytes for every measured variant before timing. This establishes corpus agreement, including binary data, rather than full conformance of permissive competitors.\n- Standard padded encoding/decoding uses binary sizes 0, 1, 2, 3, 16, 64, 4096, and 1048576 bytes. Standard unpadded and both URL-safe policies use 2 and 4096 bytes. Kujirahand supplies only a padded standard binary encoder, so it participates only in that policy; its quadratic string-concatenation encoder is limited to 4096-byte inputs. Its linear decoder retains the large cases. Tonyfettes 0.1.0 is excluded because its legacy module metadata cannot be installed by the recorded toolchain.\n- Common encoding allocates a String; common decoding accepts StringView and allocates Bytes. Gmlewis requires BytesView-to-FixedArray conversion on encoding and StringView-to-String on decoding, both timed. Kujirahand's required owned Bytes/String conversion is timed. Full views can reuse their original owned value; offset-1 views require materialization where the API needs ownership. Moonbase decoding explicitly selects strict=true and the matching padding policy.\n- Our StringView decoder reads UTF-16 directly; it does not first allocate UTF-8. Our allocating encoder builds ASCII bytes then converts them to String. Byte-input decoding is reported separately. Buffer-reuse cases prepare destination arrays outside the timer; in-place decoding includes an encoded-input copy inside each invocation so every call receives Base64 input. Validation cases allocate no output. All calls retain bench.keep barriers.\n- Case names use workload:implementation:binary_payload_bytes:view_offset. Decoder throughput uses the actual encoded ASCII input length, including padding; each JSON summary records input_bytes, input_code_units, output_bytes, input_offset, and offset_unit. ASCII wire bytes and UTF-16 code-unit counts are distinguished; UTF-16 backing storage uses two bytes per code unit. Empty-input throughput is n/a.\n- The port adapts base64-simd/vsimd 0.8.0's scalar, ALSW lookup, and portable vector bit transforms to V128. Native and Wasm explicit requests process bounded 16-byte loads; other backends fall back to scalar. Encoding consumes twelve source bytes per vector, decoding writes exactly twelve output bytes per sixteen characters, and remainders stay scalar. Rust runtime CPU dispatch and AVX2/NEON-specific 256-bit kernels are outside this portable port.\n- Release mode and sequential backends on each runner. Core calibrates near 100 ms, takes 10 batch samples, and applies 5% winsorization; fast cases use 100000 iterations per batch. Bold marks the lowest observed mean in a row, and * marks CV >= 5% as possible noise. These hosted means describe the recorded workloads; variation must inform significance claims.\n\n",
+  )
+  let all = [
+    "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+  ]
+  let labels = [
+    "ours scalar", "ours SIMD request", "core", "gmlewis", "kujirahand", "moonbase",
+  ]
+  let large_encoders = ["own-scalar", "own-simd", "core", "gmlewis", "moonbase"]
+  let large_labels = [
+    "ours scalar", "ours SIMD request", "core", "gmlewis", "moonbase",
+  ]
+  results_table(
+    builder,
+    records,
+    "Encode 64 bytes to String (ns)",
+    "encode-standard",
+    "64",
+    "0",
+    "ns",
+    64,
+    implementations=all,
+    labels~,
+  )
+  results_table(
+    builder,
+    records,
+    "Decode 88 ASCII characters to 64 bytes (ns)",
+    "decode-standard",
+    "64",
+    "0",
+    "ns",
+    88,
+    implementations=all,
+    labels~,
+  )
+  results_table(
+    builder,
+    records,
+    "Encode 1 MiB to String (GiB/s of binary input)",
+    "encode-standard",
+    "1048576",
+    "0",
+    "GiB/s",
+    1048576,
+    implementations=large_encoders,
+    labels=large_labels,
+  )
+  results_table(
+    builder,
+    records,
+    "Decode a 1 MiB payload (GiB/s of 1398104 encoded bytes)",
+    "decode-standard",
+    "1048576",
+    "0",
+    "GiB/s",
+    1398104,
+    implementations=all,
+    labels~,
+  )
+  builder.write_string(
+    "<details>\n<summary>Other variants, partial views, buffer APIs, and runner context</summary>\n\n",
+  )
+  results_table(
+    builder,
+    records,
+    "URL-safe unpadded encoding, 4 KiB (microseconds)",
+    "encode-url-safe-no-pad",
+    "4096",
+    "0",
+    "us",
+    4096,
+    implementations=large_encoders,
+    labels=large_labels,
+  )
+  results_table(
+    builder,
+    records,
+    "URL-safe unpadded decoding, 4 KiB (microseconds)",
+    "decode-url-safe-no-pad",
+    "4096",
+    "0",
+    "us",
+    5462,
+    implementations=large_encoders,
+    labels=large_labels,
+  )
+  results_table(
+    builder,
+    records,
+    "Encode 1 MiB from view offset 1 (GiB/s)",
+    "encode-standard",
+    "1048576",
+    "1",
+    "GiB/s",
+    1048576,
+    implementations=large_encoders,
+    labels=large_labels,
+  )
+  results_table(
+    builder,
+    records,
+    "Decode 1 MiB from UTF-16 view offset 1 (GiB/s of encoded bytes)",
+    "decode-standard",
+    "1048576",
+    "1",
+    "GiB/s",
+    1398104,
+    implementations=all,
+    labels~,
+  )
+  results_table(
+    builder,
+    records,
+    "Decode prepared ASCII bytes, 1 MiB payload (GiB/s)",
+    "decode-bytes-standard",
+    "1048576",
+    "0",
+    "GiB/s",
+    1398104,
+    implementations=["own-scalar", "own-simd", "moonbase"],
+    labels=["ours scalar", "ours SIMD request", "moonbase"],
+  )
+  for
+    workload in [
+      "encode-into-standard", "decode-into-standard", "decode-inplace-standard",
+      "check-standard",
+    ] {
+    results_table(
+      builder,
+      records,
+      workload + ", 1 MiB payload (microseconds)",
+      workload,
+      "1048576",
+      "0",
+      "us",
+      1048576,
+      implementations=["own-scalar", "own-simd"],
+      labels=["ours scalar", "ours SIMD request"],
+    )
+  }
+  builder.write_string(
+    "## Runner context\n\n| OS | Runner | CPU | Architecture | Image |\n| --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(record, "runner_label"))} | \{cell(text(cpu, "model"))} | \{display(field(cpu, "architecture"))} | \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} |\n",
+    )
+  }
+  for record in records {
+    builder.write_string(
+      "\n### \{text(record, "os")}\n\n~~~text\n\{text(record, "toolchain")}\nNode \{text(record, "node")}\n~~~\n\n",
+    )
+    for backend in array(record, "backends") {
+      builder.write_string(
+        "- \{text(backend, "backend")}: \{text(backend, "started_at_utc")} to \{text(backend, "finished_at_utc")}\n",
+      )
+    }
+    builder.write_string(
+      "\n~~~text\n\{text(array(record, "backends")[0], "command")}\n~~~\n",
+    )
+  }
+  builder.write_string(
+    "\nRun moon -C benchmarks test --target all, then moon run scripts/benchmark.mbtx base64. Published reports reject local data, incomplete inventories or matrices, mismatched lengths, changed dependencies, and mixed source commits/runs/attempts/toolchains. Raw stdout/stderr logs are retained as CI artifacts for 90 days. The measured source revision remains unchanged when this report is committed later.\n\n</details>\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Requires a validation failure for a deliberately corrupted report fixture.
+fn must_reject(operation : () -> Unit raise) -> Unit raise {
+  try operation() catch {
+    _ => ()
+  } noraise {
+    _ => fail("Corrupted benchmark data was accepted")
+  }
+}
+
+///|
+/// Clones a JSON value before changing a field so rejection fixtures remain independent.
+fn changed(value : Json, key : String, replacement : Json) -> Json raise {
+  let copy = @json.parse(value.stringify())
+  match copy {
+    Object(fields) => {
+      fields[key] = replacement
+      copy
+    }
+    _ => fail("Expected an object fixture")
+  }
+}
+
+///|
+/// Exercises Base64 inventories, metadata, timing ranges, complete matrices, and provenance failures.
+fn base64_self_test() -> Unit raise {
+  let cases : Array[Json] = []
+  for (name, value) in expected_base64_cases() {
+    match value {
+      Object(fields) => {
+        fields["name"] = Json(name)
+        fields["mean"] = 1.0
+        fields["min"] = 0.5
+        fields["max"] = 1.5
+        fields["median"] = 1.0
+        fields["std_dev"] = 0.01
+        fields["std_dev_pct"] = 1.0
+        fields["runs"] = 10
+        fields["batch_size"] = 100000
+        cases.push(value)
+      }
+      _ => fail("Invalid expected case metadata")
+    }
+  }
+  assert_eq(cases.length(), 200)
+  validate_base64_inventory(cases)
+  let wrong = cases.copy()
+  wrong[0] = changed(cases[0], "name", "encode-standard:unrequested:0:0")
+  must_reject(() => validate_base64_inventory(wrong))
+  wrong[0] = changed(cases[0], "input_bytes", -1)
+  must_reject(() => validate_base64_inventory(wrong))
+  wrong[0] = cases[1]
+  must_reject(() => validate_base64_inventory(wrong))
+  must_reject(() => validate_base64_inventory(cases[:199].to_owned()))
+  let backends : Array[Json] = []
+  for backend in ["native", "wasm", "wasm-gc", "js"] {
+    backends.push({
+      "backend": backend,
+      "time_unit": "microseconds",
+      "command": "moon -C benchmarks bench --release --no-parallelize",
+      "started_at_utc": "2026-11-24T00:00:00Z",
+      "finished_at_utc": "2026-11-24T00:10:00Z",
+      "summaries": Json(cases),
+    })
+  }
+  validate_backend(backends[0], "base64")
+  wrong[0] = changed(cases[0], "mean", 2.0)
+  must_reject(() => {
+    validate_backend(changed(backends[0], "summaries", Json(wrong)), "base64")
+  })
+  let records : Array[Json] = []
+  for os in ["linux", "macos", "windows"] {
+    records.push({
+      "os": os,
+      "module": "justjavac/base64",
+      "source": "github-actions",
+      "source_commit": "0".repeat(40),
+      "repository": "justjavac/moonbit-simd",
+      "run_id": "1",
+      "run_attempt": "1",
+      "run_url": "https://github.com/justjavac/moonbit-simd/actions/runs/1",
+      "cpu": { "model": "self-test CPU", "architecture": "x64" },
+      "toolchain": "moon test\nmoonc test-build (2026-11-24) /host/moonc",
+      "node": "v24.0.0",
+      "runner_label": os,
+      "image_os": os,
+      "image_version": "1",
+      "module_manifest": "base64 manifest",
+      "comparison_manifest": "pinned comparisons",
+      "comparison_dependencies": Json(base64_dependencies()),
+      "backends": Json(backends),
+    })
+  }
+  validate_snapshot(records, "base64")
+  assert_true(base64_report(records).find("2400 measurements") is Some(_))
+  let corrupt = records.copy()
+  for
+    (key, replacement) in [
+      ("source", Json("local")),
+      ("source_commit", Json("1".repeat(40))),
+      ("run_id", Json("2")),
+      ("run_attempt", Json("2")),
+      ("repository", Json("other/repository")),
+      ("run_url", Json("https://example.com")),
+      ("toolchain", Json("moonc other-build (2026-11-24) /host/moonc")),
+      ("comparison_manifest", Json("changed comparisons")),
+      ("comparison_dependencies", Json(([] : Array[Json]))),
+      ("backends", Json(backends[:3].to_owned())),
+    ] {
+    corrupt[1] = changed(records[1], key, replacement)
+    must_reject(() => validate_snapshot(corrupt, "base64"))
+  }
+  corrupt[1] = records[0]
+  must_reject(() => validate_snapshot(corrupt, "base64"))
 }
 
 ///|
@@ -990,6 +1564,126 @@ fn utf8_self_test() -> Unit raise {
 /// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
 fn self_test() -> Unit raise {
   utf8_self_test()
+  base64_self_test()
+  assert_eq(expected_atoi_names().length(), 176)
+  let statistics : Json = {
+    "min": 0.5,
+    "max": 1.5,
+    "mean": 1,
+    "median": 1,
+    "sum": 10,
+    "variance": 0.01,
+    "median_abs_dev": 0.1,
+    "median_abs_dev_pct": 10,
+    "quartiles": [0.75, 1, 1.25],
+    "iqr": 0.5,
+    "batch_size": 100,
+    "runs": 10,
+  }
+  validate_atoi_statistics(statistics)
+  let snapshots = atoi_snapshot_fixture(statistics)
+  validate_snapshot(snapshots, "atoi")
+  let crlf = snapshots.copy()
+  crlf[1] = test_field(
+    crlf[1],
+    "module_manifest",
+    Json(text(crlf[1], "module_manifest").replace_all(old="\n", new="\r\n")),
+  )
+  validate_snapshot(crlf, "atoi")
+  let wrong_upstream = test_field(
+    field(snapshots[0], "ported_upstream"),
+    "revision",
+    "changed",
+  )
+  let original_backends = array(snapshots[0], "backends")
+  for
+    (key, replacement) in [
+      ("source_commit", Json("1123456789012345678901234567890123456789")),
+      ("run_attempt", Json("2")),
+      ("module_manifest", Json("changed")),
+      ("comparison_manifest", Json("changed")),
+      ("ported_upstream", wrong_upstream),
+      ("source", Json("local")),
+      ("backends", Json(original_backends[:3].to_owned())),
+      (
+        "backends",
+        Json([
+          original_backends[0],
+          original_backends[0],
+          original_backends[2],
+          original_backends[3],
+        ]),
+      ),
+    ] {
+    let changed = snapshots.copy()
+    changed[1] = test_field(changed[1], key, replacement)
+    try validate_snapshot(changed, "atoi") catch {
+      _ => ()
+    } noraise {
+      _ => fail("Mixed or incomplete integer provenance must fail: " + key)
+    }
+  }
+  try validate_snapshot(snapshots[:2].to_owned(), "atoi") catch {
+    _ => ()
+  } noraise {
+    _ => fail("A partial integer OS matrix must fail")
+  }
+  let changes : Array[(String, Json)] = [
+    ("batch_size", 1.5),
+    ("quartiles", [0.75, 1]),
+    ("quartiles", [1.25, 1, 0.75]),
+    ("quartiles", [0.75, 1, "invalid"]),
+    ("variance", -0.01),
+    ("sum", "invalid"),
+    ("sum", 11),
+    ("iqr", 0.75),
+  ]
+  for (key, value) in changes {
+    let malformed = match statistics {
+      Object(fields) => {
+        let changed = fields.copy()
+        changed[key] = value
+        Json(changed)
+      }
+      _ => fail("Expected a test statistic object")
+    }
+    try validate_atoi_statistics(malformed) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Malformed integer sample metadata must fail")
+    }
+  }
+  let atoi_cases : Array[Json] = []
+  for (name, _) in expected_atoi_names() {
+    atoi_cases.push({ "name": name })
+  }
+  validate_atoi_inventory(atoi_cases)
+  for
+    changed in [
+      "parse-u64-sixteen:own-simd:16:2", "parse-u128-max:own-scalar:38:0", "size-u64:core:64:0",
+      "prefix-i64-min:own-simd:20:0",
+    ] {
+    let substituted = atoi_cases.copy()
+    substituted[0] = { "name": changed }
+    try validate_atoi_inventory(substituted) catch {
+      _ => ()
+    } noraise {
+      _ => fail("A substituted integer case must fail even with 176 entries")
+    }
+  }
+  let duplicate_atoi = atoi_cases.copy()
+  duplicate_atoi[0] = duplicate_atoi[1]
+  try validate_atoi_inventory(duplicate_atoi) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Duplicate integer cases must fail")
+  }
+  try validate_atoi_inventory([]) catch {
+    _ => ()
+  } noraise {
+    _ => fail("An incomplete integer inventory must fail")
+  }
+
   let valid : Json = {
     "name": "combine:gf2:18446744073709551615:0",
     "mean": 1.0,
@@ -1037,6 +1731,464 @@ fn self_test() -> Unit raise {
 }
 
 ///|
+/// Defines every integer case with its exact byte count, adapter, and view offset.
+fn expected_atoi_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length, partial, compare_core) in [
+      ("parse-u32-short", 1, false, true),
+      ("parse-u32-max", 10, false, true),
+      ("parse-u64-short", 1, false, true),
+      ("parse-u64-eight", 8, false, true),
+      ("parse-u64-sixteen", 16, true, true),
+      ("parse-u64-max", 20, true, true),
+      ("parse-i64-short", 2, false, true),
+      ("parse-i64-sixteen", 17, true, true),
+      ("parse-i64-max", 19, false, true),
+      ("parse-i64-min", 20, true, true),
+      ("parse-u128-sixteen", 16, false, true),
+      ("parse-u128-thirtytwo", 32, true, true),
+      ("parse-u128-max", 39, true, true),
+      ("parse-i128-short", 2, false, true),
+      ("parse-i128-thirtytwo", 33, true, true),
+      ("parse-i128-min", 40, true, true),
+      ("parse-u64-plus-zeroes", 83, false, true),
+      ("parse-i128-plus-zeroes", 83, false, true),
+      ("parse-u64-zeroes-4k", 4096, false, true),
+      ("parse-u64-zeroes-1m", 1048576, false, true),
+      ("prefix-u64-sixteen", 21, true, true),
+      ("prefix-i64-min", 25, false, true),
+      ("prefix-u128-max", 44, false, true),
+      ("prefix-i128-min", 45, false, true),
+      ("invalid-u64-empty", 0, false, true),
+      ("invalid-u64-start", 4, false, true),
+      ("invalid-u64-end", 17, false, true),
+      ("invalid-u64-byte", 17, false, true),
+      ("overflow-u64", 20, false, true),
+      ("overflow-u32-large", 65536, false, true),
+      ("overflow-u128", 39, false, true),
+      ("size-u64", 64, false, false),
+    ] {
+    let offsets = if partial { [0, 1, 3, 15] } else { [0] }
+    let implementations = if compare_core {
+      ["own-scalar", "own-simd", "core"]
+    } else {
+      ["own-scalar", "own-simd"]
+    }
+    for implementation in implementations {
+      for offset in offsets {
+        expected["\{label}:\{implementation}:\{length}:\{offset}"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects incomplete, duplicated, or substituted integer benchmark contracts.
+fn validate_atoi_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_atoi_names()
+  guard summaries.length() == expected.length() else {
+    fail("Expected 176 integer cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected integer benchmark: " + name)
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Incomplete integer case inventory") }
+}
+
+///|
+/// Checks all integer distribution statistics and integral sampling metadata.
+fn validate_atoi_statistics(summary : Json) -> Unit raise {
+  guard array(summary, "quartiles")
+    is [Number(low, ..), Number(middle, ..), Number(high, ..)] else {
+    fail("Integer quartiles require three numeric values")
+  }
+  let minimum = number(summary, "min")
+  let maximum = number(summary, "max")
+  let tolerance = maximum.abs() * 0.000000000001 + 0.000000000001
+  guard low.is_finite() &&
+    middle.is_finite() &&
+    high.is_finite() &&
+    minimum <= low + tolerance &&
+    low <= middle + tolerance &&
+    middle <= high + tolerance &&
+    high <= maximum + tolerance &&
+    (middle - number(summary, "median")).abs() <= tolerance else {
+    fail("Invalid integer quartile range")
+  }
+  for
+    statistic in [
+      "sum", "variance", "median_abs_dev", "median_abs_dev_pct", "iqr",
+    ] {
+    guard number(summary, statistic) >= 0 else {
+      fail("Invalid integer statistic: " + statistic)
+    }
+  }
+  let batch = number(summary, "batch_size")
+  guard batch >= 1 &&
+    batch.floor() == batch &&
+    (number(summary, "iqr") - (high - low)).abs() <= tolerance &&
+    (number(summary, "sum") - number(summary, "mean") * number(summary, "runs")).abs() <=
+    tolerance * 10 else {
+    fail("Inconsistent integer distribution or batch metadata")
+  }
+}
+
+///|
+/// Verifies the pinned port and the three bundled core comparison packages.
+fn validate_atoi_metadata(record : Json) -> Unit raise {
+  let upstream = field(record, "ported_upstream")
+  guard number(record, "schema_version") == 1 &&
+    text(upstream, "package") == "atoi_simd" &&
+    text(upstream, "version") == "0.18.1" &&
+    text(upstream, "revision") == "f0952f7bb71ee581dcc2871841f9b2dbd241bd7e" &&
+    text(upstream, "crate_sha256") ==
+    "f3cdb3708a128e559a30fb830e8a77a5022ee6902806925c216658652b452a44" &&
+    text(upstream, "license") == "MIT" &&
+    field(upstream, "timed") == Json::boolean(false) else {
+    fail("Missing or changed pinned atoi_simd provenance")
+  }
+  let expected : Map[String, Unit] = {
+    "moonbitlang/core/string": (),
+    "moonbitlang/core/encoding/utf8": (),
+    "moonbitlang/core/bigint": (),
+  }
+  let dependencies = array(record, "comparison_dependencies")
+  guard dependencies.length() == 3 else {
+    fail("Expected the three core integer adapter dependencies")
+  }
+  let version = text(dependencies[0], "version")
+  guard version != "" else { fail("Missing bundled core version") }
+  for dependency in dependencies {
+    let path = text(dependency, "package")
+    guard expected.contains(path) &&
+      text(dependency, "version") == version &&
+      text(dependency, "license") == "Apache-2.0" &&
+      text(dependency, "api") != "" else {
+      fail("Invalid integer comparison dependency: " + path)
+    }
+    let _ = expected.remove(path)
+  }
+}
+
+///|
+/// Validates a complete local integer record without accepting it as CI data.
+fn validate_local_atoi(record : Json) -> Unit raise {
+  guard text(record, "module") == "justjavac/atoi" &&
+    text(record, "source") == "local" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" &&
+    text(record, "run_attempt") == "" &&
+    ["linux", "macos", "windows"].contains(text(record, "os")) &&
+    text(field(record, "cpu"), "model") != "" else {
+    fail("The local renderer requires a local integer collector artifact")
+  }
+  validate_atoi_metadata(record)
+  let backends = array(record, "backends")
+  guard backends.length() == 4 else {
+    fail("Local integer reports require all four backends")
+  }
+  let names : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !names.contains(name) else { fail("Duplicate local integer backend") }
+    names[name] = ()
+    validate_backend(backend, "atoi")
+  }
+}
+
+///|
+/// Renders an integer-specific comparison using its equivalent public adapters.
+fn atoi_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  bytes : String,
+  units : String,
+) -> Unit raise {
+  results_table(
+    builder,
+    records,
+    title,
+    workload,
+    bytes,
+    "0",
+    units,
+    @string.parse_int(bytes).to_double(),
+    implementations=["own-scalar", "own-simd", "core"],
+    labels=[
+      "ours scalar",
+      "ours SIMD request",
+      if workload.find("128") is Some(_) {
+        "core bounded BigInt + UTF-8"
+      } else {
+        "core integer + UTF-8"
+      },
+    ],
+  )
+}
+
+///|
+/// Builds a decimal report with explicit local provenance and required adaptation costs.
+fn atoi_report(records : Array[Json], is_local~ : Bool = false) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# Decimal integer performance comparison\n\n")
+  if is_local {
+    builder.write_string(
+      "**Local " +
+      text(first, "os") +
+      " measurement; not a published CI snapshot.** Source HEAD `" +
+      text(first, "source_commit") +
+      "`; working tree dirty: " +
+      display(field(first, "working_tree_dirty")) +
+      ".\n\n",
+    )
+  } else {
+    let revision = text(first, "source_commit")
+    builder.write_string(
+      "[CI run " +
+      text(first, "run_id") +
+      "](" +
+      text(first, "run_url") +
+      ") | [source " +
+      revision[:7].to_owned() +
+      "](https://github.com/" +
+      text(first, "repository") +
+      "/commit/" +
+      revision +
+      ") | attempt " +
+      text(first, "run_attempt") +
+      "\n\n",
+    )
+  }
+  let data_file = if is_local {
+    "LOCAL-BENCHMARK-DATA.json"
+  } else {
+    "BENCHMARK-DATA.json"
+  }
+  builder.write_string(
+    "**Scope:** " +
+    records.length().to_string() +
+    " OS x 4 backends x 176 cases = **" +
+    (records.length() * 704).to_string() +
+    " measurements**. [" +
+    data_file +
+    "](" +
+    data_file +
+    ") preserves every unrounded statistic, case, offset, command, timestamp, source/run/attempt, dependency version, CPU, runner image, and toolchain.\n\n",
+  )
+  builder.write_string(
+    "## Vector gains within this library\n\nRatios divide scalar latency by SIMD-request latency for the same public operation. Ratios above one favor the SIMD request.\n\n| OS / backend | UInt64, 16 digits | UInt128, maximum |\n| --- | --- | --- |\n",
+  )
+  for record in records {
+    for backend in array(record, "backends") {
+      let name = text(backend, "backend")
+      if name == "native" || name == "wasm" {
+        let values = index(backend)
+        let word = number(values["parse-u64-sixteen:own-scalar:16:0"], "mean") /
+          number(values["parse-u64-sixteen:own-simd:16:0"], "mean")
+        let wide = number(values["parse-u128-max:own-scalar:39:0"], "mean") /
+          number(values["parse-u128-max:own-simd:39:0"], "mean")
+        builder.write_string(
+          "| " +
+          text(record, "os") +
+          " / " +
+          name +
+          " | " +
+          decimal(word) +
+          "x | " +
+          decimal(wide) +
+          "x |\n",
+        )
+      }
+    }
+  }
+  builder.write_string(
+    "\nCore comparisons also include required UTF-8 conversion, different integer representation, prefix adaptation, and range checks. They do not isolate vector gains. **Bold** marks the best mean; `*` marks CV >= 5% and possible noise. A best mean does not establish statistical significance.\n\n",
+  )
+  atoi_table(
+    builder, records, "One digit UInt64 (ns)", "parse-u64-short", "1", "ns",
+  )
+  atoi_table(
+    builder, records, "Sixteen digit UInt64 (ns)", "parse-u64-sixteen", "16", "ns",
+  )
+  atoi_table(
+    builder, records, "Minimum Int64 (ns)", "parse-i64-min", "20", "ns",
+  )
+  atoi_table(
+    builder, records, "Maximum UInt128 (ns)", "parse-u128-max", "39", "ns",
+  )
+  atoi_table(
+    builder, records, "UInt64 prefix with suffix (ns)", "prefix-u64-sixteen", "21",
+    "ns",
+  )
+  atoi_table(
+    builder, records, "Early rejection of 64 KiB nonzero UInt32 input (us)", "overflow-u32-large",
+    "65536", "us",
+  )
+  atoi_table(
+    builder, records, "One MiB leading zeroes, complete parse (GiB/s)", "parse-u64-zeroes-1m",
+    "1048576", "GiB/s",
+  )
+  builder.write_string(
+    "## APIs and method\n\n- Decimal base ten. Tests check identical returned values, consumed prefix sizes, and accepted/rejected corpus cases before timing. Full and prefix parsing are separate workloads. An excessive-size workload measures only this library because core has no matching digit budget.\n- Owned byte inputs, partial-view buffers, and rejected sentinels are prepared outside timing. Offsets 1, 3, and 15 exercise selected boundaries. Public calls, optional-result adaptation, generic callback dispatch, and bench.keep barriers are timed; decimal result formatting is confined to equivalence tests.\n- Core string parsers require strict UTF-8-to-UTF-16 conversion. Its missing prefix API uses a per-byte ASCII scan; an enabled leading plus is removed for the BigInt parser while preserving consumption. Core BigInt is explicitly range-checked for signed/unsigned 128-bit results. These required costs remain in the timer.\n- Scalar requests use upstream-derived eight-byte SWAR masks and decimal reduction, with byte-wise tails. SIMD requests use bounded V128 range masks and a 16-to-8-to-4-to-2-to-1 decimal reduction tree on native and linear-memory Wasm. Inputs below sixteen bytes and Wasm GC/JavaScript use scalar/SWAR fallback. Vector loads stay inside the input view.\n- Prefix, invalid-input, overflow, and size workloads report latency rather than whole-buffer throughput. The one MiB zero case reads the whole input before returning zero with skip_zeroes=true. UInt128/Int128 use exact private UInt64 word pairs and checked base-2^32 carries.\n- Release mode and --no-parallelize, with backends measured sequentially on each OS. The core runner calibrates around 100 ms, records 10 batch samples, and applies 5% winsorization; fast cases use 100000 iterations per batch. Every case retains runs and batch_size.\n\n",
+  )
+  builder.write_string(
+    "Leading-zero removal uses the measured SWAR path for both requests; an all-zero input can remain entirely scalar/SWAR with simd=true. The earlier local vector zero scan was slower on native and Wasm. Wide core range bounds are initialized outside timed callbacks, while their comparisons remain timed.\n\n",
+  )
+  builder.write_string(
+    "Port: [atoi_simd 0.18.1](https://crates.io/crates/atoi_simd/0.18.1), revision `f0952f7bb71ee581dcc2871841f9b2dbd241bd7e`, under its MIT option. Rust is an external correctness oracle and is not linked into or timed with the MoonBit library.\n\n<details>\n<summary>Dependencies, runners, commands, and reproduction</summary>\n\n| Package | Version | License |\n| --- | --- | --- |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| " +
+      cell(text(dependency, "package")) +
+      " | " +
+      cell(text(dependency, "version")) +
+      " | " +
+      cell(text(dependency, "license")) +
+      " |\n",
+    )
+  }
+  builder.write_string(
+    "\n| OS | CPU | Architecture | Runner image |\n| --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| " +
+      text(record, "os") +
+      " | " +
+      cell(text(cpu, "model")) +
+      " | " +
+      display(field(cpu, "architecture")) +
+      " | " +
+      cell(text(record, "image_os") + " " + text(record, "image_version")) +
+      " |\n",
+    )
+  }
+  for record in records {
+    builder.write_string(
+      "\n**" +
+      text(record, "os") +
+      ":**\n\n~~~text\n" +
+      text(record, "toolchain") +
+      "\n~~~\n\n",
+    )
+    for backend in array(record, "backends") {
+      builder.write_string(
+        text(backend, "backend") +
+        ": " +
+        text(backend, "started_at_utc") +
+        " to " +
+        text(backend, "finished_at_utc") +
+        " (UTC).\n\n~~~text\n" +
+        text(backend, "command") +
+        "\n~~~\n\n",
+      )
+    }
+  }
+  builder.write_string(
+    "Run `moon -C benchmarks test atoi --target all`, then `moon run scripts/benchmark.mbtx atoi`. Local rendering uses `moon run scripts/benchmark_report.mbtx --local atoi _build/benchmarks/atoi/windows.json _build/atoi-report`. Publish only a complete three-OS/four-backend CI snapshot with identical source, run, attempt, manifests, and dependencies; the validator rejects mixed or partial data. Raw CI logs are retained for 90 days.\n\n</details>\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Replaces one field in a schema-test object without mutating shared fixtures.
+fn test_field(value : Json, key : String, replacement : Json) -> Json raise {
+  match value {
+    Object(fields) => {
+      let copy = fields.copy()
+      copy[key] = replacement
+      Json(copy)
+    }
+    _ => fail("Expected a schema-test object")
+  }
+}
+
+///|
+/// Builds explicitly fabricated complete integer data to exercise publication guards.
+fn atoi_snapshot_fixture(statistics : Json) -> Array[Json] raise {
+  let summaries : Array[Json] = []
+  let distribution = test_field(
+    test_field(statistics, "std_dev", 0.1),
+    "std_dev_pct",
+    10,
+  )
+  for (name, _) in expected_atoi_names() {
+    summaries.push(test_field(distribution, "name", Json(name)))
+  }
+  let backends : Array[Json] = []
+  for name in ["native", "wasm", "wasm-gc", "js"] {
+    backends.push({
+      "backend": name,
+      "time_unit": "microseconds",
+      "command": "moon -C benchmarks bench --target " +
+      name +
+      " --release --no-parallelize -p justjavac/benchmarks/atoi",
+      "started_at_utc": "2026-11-25T00:00:00Z",
+      "finished_at_utc": "2026-11-25T00:01:00Z",
+      "summaries": Json(summaries),
+    })
+  }
+  let records : Array[Json] = []
+  for os in ["linux", "macos", "windows"] {
+    records.push({
+      "schema_version": 1,
+      "module": "justjavac/atoi",
+      "source": "github-actions",
+      "source_commit": "0123456789012345678901234567890123456789",
+      "repository": "example/fixture",
+      "run_id": "123",
+      "run_attempt": "1",
+      "run_url": "https://github.com/example/fixture/actions/runs/123",
+      "os": os,
+      "cpu": { "model": "schema fixture" },
+      "module_manifest": "name = \"justjavac/atoi\"\nversion = \"0.1.0\"\n",
+      "comparison_manifest": "justjavac/atoi@0.1.0\n",
+      "comparison_dependencies": [
+        {
+          "package": "moonbitlang/core/string",
+          "version": "fixture",
+          "license": "Apache-2.0",
+          "api": "fixture",
+        },
+        {
+          "package": "moonbitlang/core/encoding/utf8",
+          "version": "fixture",
+          "license": "Apache-2.0",
+          "api": "fixture",
+        },
+        {
+          "package": "moonbitlang/core/bigint",
+          "version": "fixture",
+          "license": "Apache-2.0",
+          "api": "fixture",
+        },
+      ],
+      "ported_upstream": {
+        "package": "atoi_simd",
+        "version": "0.18.1",
+        "revision": "f0952f7bb71ee581dcc2871841f9b2dbd241bd7e",
+        "crate_sha256": "f3cdb3708a128e559a30fb830e8a77a5022ee6902806925c216658652b452a44",
+        "license": "MIT",
+        "timed": false,
+      },
+      "backends": Json(backends),
+    })
+  }
+  records
+}
+
+///|
 /// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
 async fn main {
   let arguments = @env.args()
@@ -1046,22 +2198,27 @@ async fn main {
     return
   }
   if arguments.length() == 5 && arguments[1] == "--local" {
-    guard arguments[2] == "utf8" else {
-      fail("Local rendering supports UTF-8 artifacts")
+    guard ["atoi", "utf8"].contains(arguments[2]) else {
+      fail("Local rendering supports integer and UTF-8 artifacts")
     }
     let record = @json.parse(@fs.read_text(arguments[3]))
-    validate_local_utf8(record)
+    let markdown = if arguments[2] == "utf8" {
+      validate_local_utf8(record)
+      utf8_report([record], is_local=true)
+    } else {
+      validate_local_atoi(record)
+      atoi_report([record], is_local=true)
+    }
     let directory = arguments[4]
     @fs.mkdir(directory, recursive=true, allow_existing=true)
+    @fs.write_text(directory + "/LOCAL-BENCHMARK.md", markdown)
     @fs.write_text(
-      "\{directory}/LOCAL-BENCHMARK.md",
-      utf8_report([record], is_local=true),
-    )
-    @fs.write_text(
-      "\{directory}/LOCAL-BENCHMARK-DATA.json",
+      directory + "/LOCAL-BENCHMARK-DATA.json",
       Json([record]).stringify(indent=2),
     )
-    println("Generated explicitly local UTF-8 report in " + directory)
+    println(
+      "Generated explicitly local " + arguments[2] + " report in " + directory,
+    )
     return
   }
   guard arguments.length() == 3 else {

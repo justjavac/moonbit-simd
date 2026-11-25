@@ -8,6 +8,7 @@ import {
 
 ///|
 /// Exports only native trace metadata after the workspace's instrumented native tests.
+/// Flat library roots share the same three trace-source paths.
 async fn main {
   let args = @env.args()
   guard args.length() >= 3 &&

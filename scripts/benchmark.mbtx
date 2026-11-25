@@ -155,6 +155,218 @@ fn summaries(output : String) -> Array[Json] raise {
 }
 
 ///|
+/// Defines every Base64 case and the actual input/output lengths behind its binary-size label.
+fn base64_inventory() -> Map[String, Json] {
+  let cases : Map[String, Json] = Map([])
+  fn add(
+    workload : String,
+    implementation : String,
+    variant : String,
+    length : Int32,
+    padding : Bool,
+    offset : Int32,
+  ) -> Unit {
+    let tail = length % 3
+    let encoded = length / 3 * 4 +
+      (if tail == 0 { 0 } else if padding { 4 } else { tail + 1 })
+    let encoding = workload.has_prefix("encode-")
+    let text_input = workload == "decode-" + variant
+    cases["\{workload}:\{implementation}:\{length}:\{offset}"] = {
+      "binary_bytes": length,
+      "input_bytes": if encoding {
+        length
+      } else {
+        encoded
+      },
+      "input_code_units": if text_input {
+        encoded
+      } else {
+        0
+      },
+      "output_bytes": if encoding {
+        encoded
+      } else if workload.has_prefix("check-") {
+        0
+      } else {
+        length
+      },
+      "input_offset": offset,
+      "offset_unit": if text_input {
+        "utf16-code-units"
+      } else {
+        "bytes"
+      },
+      "variant": variant,
+    }
+  }
+  for variant in ["standard", "standard-no-pad", "url-safe", "url-safe-no-pad"] {
+    let padding = variant == "standard" || variant == "url-safe"
+    let sizes = if variant == "standard" {
+      [0, 1, 2, 3, 16, 64, 4096, 1048576]
+    } else {
+      [2, 4096]
+    }
+    for length in sizes {
+      for
+        implementation in [
+          "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+        ] {
+        if implementation != "kujirahand" || variant == "standard" {
+          if implementation != "kujirahand" || length <= 4096 {
+            add(
+              "encode-" + variant,
+              implementation,
+              variant,
+              length,
+              padding,
+              0,
+            )
+          }
+          add("decode-" + variant, implementation, variant, length, padding, 0)
+        }
+      }
+    }
+  }
+  for length in [64, 1048576] {
+    for
+      implementation in [
+        "own-scalar", "own-simd", "core", "gmlewis", "kujirahand", "moonbase",
+      ] {
+      if implementation != "kujirahand" || length <= 4096 {
+        add("encode-standard", implementation, "standard", length, true, 1)
+      }
+      add("decode-standard", implementation, "standard", length, true, 1)
+    }
+    for implementation in ["own-scalar", "own-simd", "moonbase"] {
+      add("decode-bytes-standard", implementation, "standard", length, true, 0)
+    }
+    for implementation in ["own-scalar", "own-simd"] {
+      for
+        workload in [
+          "encode-into-standard", "decode-into-standard", "decode-inplace-standard",
+          "check-standard",
+        ] {
+        add(workload, implementation, "standard", length, true, 0)
+      }
+    }
+  }
+  cases
+}
+
+///|
+/// Rejects substituted Base64 workloads and annotates every result with exact byte/code-unit counts.
+fn annotate_base64(records : Array[Json]) -> Unit raise {
+  let expected = base64_inventory()
+  guard records.length() == expected.length() && expected.length() == 200 else {
+    fail("Expected 200 Base64 benchmark cases")
+  }
+  for record in records {
+    match record {
+      Object(fields) => {
+        guard fields.get("name") is Some(String(name)) else {
+          fail("Missing Base64 case name")
+        }
+        guard expected.get(name) is Some(Object(metadata)) else {
+          fail("Unexpected or duplicate Base64 case: \{name}")
+        }
+        expected.remove(name)
+        for (key, value) in metadata {
+          fields[key] = value
+        }
+      }
+      _ => fail("Malformed Base64 benchmark record")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete Base64 inventory") }
+}
+
+///|
+/// Defines the exact integer workloads, byte counts, variants, and view offsets.
+fn expected_atoi_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length, partial, compare_core) in [
+      ("parse-u32-short", 1, false, true),
+      ("parse-u32-max", 10, false, true),
+      ("parse-u64-short", 1, false, true),
+      ("parse-u64-eight", 8, false, true),
+      ("parse-u64-sixteen", 16, true, true),
+      ("parse-u64-max", 20, true, true),
+      ("parse-i64-short", 2, false, true),
+      ("parse-i64-sixteen", 17, true, true),
+      ("parse-i64-max", 19, false, true),
+      ("parse-i64-min", 20, true, true),
+      ("parse-u128-sixteen", 16, false, true),
+      ("parse-u128-thirtytwo", 32, true, true),
+      ("parse-u128-max", 39, true, true),
+      ("parse-i128-short", 2, false, true),
+      ("parse-i128-thirtytwo", 33, true, true),
+      ("parse-i128-min", 40, true, true),
+      ("parse-u64-plus-zeroes", 83, false, true),
+      ("parse-i128-plus-zeroes", 83, false, true),
+      ("parse-u64-zeroes-4k", 4096, false, true),
+      ("parse-u64-zeroes-1m", 1048576, false, true),
+      ("prefix-u64-sixteen", 21, true, true),
+      ("prefix-i64-min", 25, false, true),
+      ("prefix-u128-max", 44, false, true),
+      ("prefix-i128-min", 45, false, true),
+      ("invalid-u64-empty", 0, false, true),
+      ("invalid-u64-start", 4, false, true),
+      ("invalid-u64-end", 17, false, true),
+      ("invalid-u64-byte", 17, false, true),
+      ("overflow-u64", 20, false, true),
+      ("overflow-u32-large", 65536, false, true),
+      ("overflow-u128", 39, false, true),
+      ("size-u64", 64, false, false),
+    ] {
+    let offsets = if partial { [0, 1, 3, 15] } else { [0] }
+    let implementations = if compare_core {
+      ["own-scalar", "own-simd", "core"]
+    } else {
+      ["own-scalar", "own-simd"]
+    }
+    for implementation in implementations {
+      for offset in offsets {
+        expected["\{label}:\{implementation}:\{length}:\{offset}"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects missing or substituted integer cases before preserving benchmark data.
+fn validate_atoi_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_atoi_names()
+  guard records.length() == expected.length() else {
+    fail("Expected 176 integer cases")
+  }
+  for record in records {
+    match record {
+      { "name": String(name), .. } => {
+        guard expected.contains(name) else {
+          fail("Unexpected integer case: " + name)
+        }
+        let _ = expected.remove(name)
+      }
+      _ => fail("Missing integer case name")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete integer case inventory") }
+}
+
+///|
+/// Extracts the bundled core's compiler version without platform-specific executable paths.
+fn bundled_core_version(toolchain : String) -> String raise {
+  for line in toolchain.split("\n") {
+    if line.find("moonc ") is Some(0) && line.find(")") is Some(end) {
+      return line[:end + 1].to_owned()
+    }
+  }
+  fail("Missing compiler version for the bundled core comparison")
+}
+
+///|
 /// Defines exact UTF-8 workloads, byte counts, modes, view offsets, and stream sizes.
 fn expected_utf8_names() -> Map[String, Unit] {
   let expected : Map[String, Unit] = Map([])
@@ -235,22 +447,21 @@ fn validate_utf8_inventory(records : Array[Json]) -> Unit raise {
 }
 
 ///|
-/// Extracts the bundled core's compiler version without platform-specific executable paths.
-fn bundled_core_version(toolchain : String) -> String raise {
-  for line in toolchain.split("\n") {
-    if line.find("moonc ") is Some(0) && line.find(")") is Some(end) {
-      return line[:end + 1].to_owned()
-    }
-  }
-  fail("Missing compiler version for the core UTF-8 comparison")
-}
-
-///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
-  guard arguments.length() >= 2 else {
-    fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+  let requested = if arguments.length() >= 2 {
+    arguments[1:].to_owned()
+  } else {
+    match environment("BENCHMARK_SCOPE") {
+      "all" => ["crc32", "url", "utf8", "base64", "atoi"]
+      "base64" => ["base64"]
+      "atoi" => ["atoi"]
+      "crc32" => ["crc32"]
+      "url" => ["url"]
+      "utf8" => ["utf8"]
+      _ => fail("Usage: moon run scripts/benchmark.mbtx <module>...")
+    }
   }
   let os = operating_system()
   let cpu = cpu_metadata(os)
@@ -270,7 +481,7 @@ async fn main {
   } else {
     "https://github.com/\{repository}/actions/runs/\{run_id}"
   }
-  for package_dir in arguments[1:] {
+  for package_dir in requested {
     guard package_dir != "" &&
       package_dir != "." &&
       package_dir != ".." &&
@@ -302,6 +513,16 @@ async fn main {
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/utf8",
         ]
+      } else if package_dir == "atoi" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/atoi",
+        ]
+      } else if package_dir == "base64" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/base64",
+        ]
       } else {
         [
           "bench",
@@ -329,11 +550,17 @@ async fn main {
       if package_dir == "utf8" {
         validate_utf8_inventory(records)
       }
+      if package_dir == "atoi" {
+        validate_atoi_inventory(records)
+      }
       guard package_dir != "crc32" || records.length() == 69 else {
         fail("Expected 69 crc32 cases, received \{records.length()}")
       }
       guard package_dir != "url" || records.length() == 144 else {
         fail("Expected 144 URL cases, received \{records.length()}")
+      }
+      if package_dir == "base64" {
+        annotate_base64(records)
       }
       let mut recorded_command = "moon " + command.join(" ")
       if package_dir == "crc32" {
@@ -402,7 +629,62 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "url" {
+      "comparison_dependencies": if package_dir == "base64" {
+        [
+          {
+            "label": "core",
+            "package": "moonbitlang/core/encoding/base64",
+            "version": "toolchain-bundled",
+            "license": "Apache-2.0",
+            "api": "encode(BytesView), decode(StringView)",
+          },
+          {
+            "label": "gmlewis",
+            "package": "gmlewis/base64",
+            "version": "0.16.15",
+            "license": "Apache-2.0",
+            "api": "std/url_encode2str(FixedArray), std/url_decode2bytes(String)",
+          },
+          {
+            "label": "kujirahand",
+            "package": "kujirahand/base64",
+            "version": "0.1.1",
+            "license": "Apache-2.0",
+            "api": "encode_bytes(Bytes), decode_bytes(String)",
+          },
+          {
+            "label": "moonbase",
+            "package": "moonbitstack/moonbase/base64",
+            "version": "0.5.1",
+            "license": "Apache-2.0",
+            "api": "encode(BytesView), decode(StringView)/decode_bytes(BytesView), strict=true",
+          },
+        ]
+      } else if package_dir == "atoi" {
+        [
+          {
+            "label": "core",
+            "package": "moonbitlang/core/string",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "parse_uint64 / parse_int64(radix=10), parse_bigint with exact 128-bit range checks",
+          },
+          {
+            "label": "core-conversion",
+            "package": "moonbitlang/core/encoding/utf8",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "decode(BytesView, ignore_bom=false), including UTF-16 allocation",
+          },
+          {
+            "label": "core-wide",
+            "package": "moonbitlang/core/bigint",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "BigInt comparisons against signed / unsigned 128-bit bounds",
+          },
+        ]
+      } else if package_dir == "url" {
         [
           {
             "label": "tonyfettes",
@@ -476,6 +758,18 @@ async fn main {
             "api": "crc32(data, kind=Ieee), Crc32",
           },
         ]
+      },
+      "ported_upstream": if package_dir == "atoi" {
+        {
+          "package": "atoi_simd",
+          "version": "0.18.1",
+          "revision": "f0952f7bb71ee581dcc2871841f9b2dbd241bd7e",
+          "crate_sha256": "f3cdb3708a128e559a30fb830e8a77a5022ee6902806925c216658652b452a44",
+          "license": "MIT",
+          "timed": false,
+        }
+      } else {
+        Json::null()
       },
       "backends": Json(backends),
     }

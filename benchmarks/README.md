@@ -1,8 +1,9 @@
 # Development benchmarks
 
 This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
-and UTF-8 comparison adapters. Its nested workspace links the local libraries while
-keeping third-party dependencies out of the published library.
+UTF-8, Base64, and decimal integer comparison adapters. Its nested workspace
+links the local libraries while keeping third-party dependencies out of the
+published libraries.
 
 Run `moon update` after installing MoonBit, then
 `moon -C benchmarks test --target all` before measuring. Results are recorded
@@ -22,6 +23,8 @@ The suite compares identical bytes using each library's public API. Owned-byte
 inputs and streaming chunks are prepared outside the timer; view-to-owned
 conversion is included only in the separately labelled view workload. Digest
 creation, byte-wise API loops, updates, and finalization are timed.
+
+## UTF-8
 
 The [UTF-8 adapters](utf8) compare `justjavac/utf8` basic scalar/SIMD and compat
 validation against `tonyfettes/utf8@0.2.4` and the bundled core UTF-8 decoder.
@@ -43,3 +46,45 @@ stream chunks. Run `moon -C benchmarks test utf8 --target all`, then
 length, API variant, and offset; the report validator independently checks that
 inventory and rejects incomplete or mixed CI runs. Explicit local reports use
 `moon run scripts/benchmark_report.mbtx --local utf8 _build/benchmarks/utf8/windows.json _build/utf8-report`.
+
+## Base64
+
+The `base64/` package compares our scalar/V128 requests with bundled core,
+`gmlewis/base64 0.16.15`, `moonbitstack/moonbase/base64 0.5.1`, and
+`kujirahand/base64 0.1.1`. Independent bitstream expectations verify every
+measured alphabet and padding policy before timing. Moonbase explicitly selects
+strict decoding. Decoder permissiveness differs among competitors; canonical
+corpus agreement does not imply equivalent rejection behavior.
+
+The exact 200-case inventory covers allocating byte-to-string encoding and
+string-to-byte decoding, byte/UTF-16 offset-1 views, direct byte decoding, reusable
+output, in-place decoding, and validation. Case lengths label binary payload
+bytes; collected metadata separately records actual encoded input bytes and
+UTF-16 code units. Decoder throughput uses its actual encoded input length.
+
+Required conversions remain timed: gmlewis needs FixedArray input for encoding
+and owned String for decoding; kujirahand needs owned Bytes/String. Kujirahand
+provides only a standard padded binary encoder, whose repeated string
+concatenation is quadratic, so its encoding inputs stop at 4 KiB while large
+decoding remains included. Tonyfettes/base64 0.1.0 has unsupported legacy module
+metadata on this toolchain and is excluded.
+
+Run `moon run scripts/benchmark.mbtx base64`. Results are recorded in
+[base64/BENCHMARK.md](../base64/BENCHMARK.md), with every statistic and complete
+CI provenance in its companion JSON. Workflow dispatch can select Base64 alone;
+each selected module still requires the full three-OS/four-backend matrix.
+
+The [integer adapters](atoi) compare the six-operation decimal port's scalar and
+SIMD requests with core string parsers and BigInt restricted to the same 128-bit
+ranges. Full and prefix parsing are separate workloads. Core's required UTF-8
+conversion, plus handling, missing-prefix scan, and wide range checks remain
+inside timing; returned values are formatted only for equivalence tests.
+
+There are 176 integer cases per backend, including one/eight/sixteen/thirty-two
+digit inputs, 64/128-bit limits, prefix suffixes, malformed bytes, overflow,
+offsets 1/3/15, and 4 KiB/1 MiB leading-zero runs. The excessive-size case measures
+only this library because core has no equivalent digit budget. Run
+`moon -C benchmarks test atoi --target all`, then `moon run scripts/benchmark.mbtx atoi`.
+The collector and report validator independently check the exact case inventory.
+Local rendering uses
+`moon run scripts/benchmark_report.mbtx --local atoi _build/benchmarks/atoi/windows.json _build/atoi-report`.

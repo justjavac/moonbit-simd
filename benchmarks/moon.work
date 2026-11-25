@@ -4,4 +4,6 @@ members = [
   "../url",
   "../utf8",
   "vendor/tonyfettes-utf8",
+  "../base64",
+  "../atoi",
 ]

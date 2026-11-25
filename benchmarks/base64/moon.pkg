@@ -1,0 +1,10 @@
+import {
+  "justjavac/base64" @ours,
+  "moonbitlang/core/encoding/base64" @core,
+  "gmlewis/base64" @gmlewis,
+  "kujirahand/base64" @kujirahand,
+  "moonbitstack/moonbase/base64" @moonbase,
+  "moonbitlang/core/bench",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"
