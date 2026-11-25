@@ -241,10 +241,13 @@ and identical IEEE CRC-32 inputs. Measurements cover Linux, macOS, and Windows
 across all four backends, including short inputs, large buffers, unaligned views,
 streaming chunk sizes, and this module's checksum-combination workloads.
 
-Scalar processing remains the default based on the initial local measurements.
-The vector path still performs scalar table lookups, so SIMD requests can be
-slower. Use the report for the measured backend and machine; hosted-runner results
-do not establish a universal speed guarantee.
+Scalar processing remains the default. The selected CI snapshot favors vector
+loads for large native inputs, while scalar is faster on Windows Wasm and some
+short workloads. Select `simd=true` for workloads where the measured backend
+benefits; hosted results do not establish a universal speed guarantee.
+
+On Wasm GC and JavaScript, both requests use the same scalar algorithm;
+differences in their benchmark columns include call-site and runtime effects.
 
 The software path in Rust `crc32c` 0.6.9 also uses slicing-by-eight, with an
 8 KiB table and aligned 64-bit words. Its faster hardware path processes three
@@ -255,6 +258,10 @@ differs from this module's IEEE CRC32. This optimization keeps the existing
 polynomial and public API, removes redundant table bounds checks, and avoids
 repeated lane extraction and vector reconstruction. It adds no hardware binding,
 parallel-chain framework, or runtime feature dispatcher.
+
+The hardware CRC instructions operate on scalar registers; three independent
+chains expose instruction parallelism. They are distinct from portable SIMD128
+loads and lane operations.
 
 Run the same suite locally:
 
