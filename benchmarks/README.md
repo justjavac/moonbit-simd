@@ -20,7 +20,8 @@ uses `moon run scripts/benchmark_report.mbtx --local ryu _build/benchmarks/ryu/w
 
 
 This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
-UTF-8, Base64, decimal integer, UUID, and Ryu comparison adapters. Its nested workspace
+UTF-8, Base64, decimal integer, extrema, UUID, and Ryu comparison adapters.
+Its nested workspace
 links the local libraries while keeping third-party dependencies out of the
 published libraries.
 
@@ -126,3 +127,23 @@ only this library because core has no equivalent digit budget. Run
 The collector and report validator independently check the exact case inventory.
 Local rendering uses
 `moon run scripts/benchmark_report.mbtx --local atoi _build/benchmarks/atoi/windows.json _build/atoi-report`.
+
+## Extrema indices
+
+The [extrema adapters](argminmax) compare `justjavac/argminmax` scalar and SIMD
+requests with an independent linear MoonBit reference. All fourteen numeric
+kinds use identical prepared typed views; half/wide wrappers and validity
+bitmaps are prepared outside timing. Public calls, bitmap validation, callback
+dispatch, optional-result adapters, and `bench.keep` remain timed. The pinned
+Rust `argminmax@0.7.1` crate identifies the source contract and is not timed here.
+
+The exact 162-case inventory covers short/large inputs, element-offset-one
+views, single extrema, first/last NaNs under both policies, validity-bit-offset
+three, dense/sparse/all-null bitmaps, and narrow index boundaries. Correctness
+tests also use a sort-based oracle and exhaustive IEEE half-float formulas.
+Run `moon -C benchmarks test argminmax --target all`, then
+`moon run scripts/benchmark.mbtx argminmax`. Results are recorded in
+[argminmax/BENCHMARK.md](../argminmax/BENCHMARK.md), with complete statistics in
+its companion JSON. Select `argminmax` in the Benchmarks workflow to measure
+all three systems and four backends in one run. Explicit local rendering uses
+`moon run scripts/benchmark_report.mbtx --local argminmax _build/benchmarks/argminmax/windows.json _build/argminmax-report`.

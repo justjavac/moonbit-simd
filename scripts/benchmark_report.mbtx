@@ -226,6 +226,20 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       fail("Missing integer release command or UTC timestamps")
     }
   }
+  if package_dir == "argminmax" {
+    validate_argminmax_inventory(summaries)
+    guard text(value, "command") ==
+      "moon -C benchmarks bench --target " +
+      backend +
+      " --release --no-parallelize -p justjavac/benchmarks/argminmax" &&
+      text(value, "started_at_utc").length() == 20 &&
+      text(value, "finished_at_utc").length() == 20 &&
+      text(value, "started_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc") >= text(value, "started_at_utc") else {
+      fail("Missing extrema release command or UTC timestamps")
+    }
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
@@ -234,6 +248,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
     names[name] = ()
     if package_dir == "atoi" {
       validate_atoi_statistics(summary)
+    }
+    if package_dir == "argminmax" {
+      validate_argminmax_statistics(summary)
     }
     let mean = number(summary, "mean")
     let minimum = number(summary, "min")
@@ -716,6 +733,22 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
   let canonical_cases : Map[String, Unit] = Map([])
   for record in records {
     let os = text(record, "os")
+    if package_dir == "argminmax" {
+      validate_argminmax_metadata(record)
+      guard text(record, "run_attempt") != "" &&
+        @string.parse_int(text(record, "run_attempt")) > 0 &&
+        field(record, "working_tree_dirty") == Json::boolean(false) &&
+        field(record, "ported_upstream") == field(first, "ported_upstream") &&
+        field(record, "workload_metadata") == field(first, "workload_metadata") &&
+        text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+        text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+        fail(
+          "Mixed extrema manifests, upstream metadata, or missing clean CI attempt",
+        )
+      }
+    }
     if package_dir == "atoi" {
       validate_atoi_metadata(record)
       guard text(record, "run_attempt") != "" &&
@@ -932,6 +965,9 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
   if package_dir == "atoi" {
     return atoi_report(records)
+  }
+  if package_dir == "argminmax" {
+    return argminmax_report(records)
   }
   if package_dir == "url" {
     return url_report(records)
@@ -2278,6 +2314,7 @@ fn self_test() -> Unit raise {
     "batch_size": 100,
     "runs": 10,
   }
+  argminmax_self_test(statistics)
   validate_atoi_statistics(statistics)
   let snapshots = atoi_snapshot_fixture(statistics)
   validate_snapshot(snapshots, "atoi")
@@ -2912,13 +2949,16 @@ async fn main {
       ryu_report(["--local", arguments[3], arguments[4]])
       return
     }
-    guard ["atoi", "utf8"].contains(arguments[2]) else {
-      fail("Local rendering supports integer and UTF-8 artifacts")
+    guard ["atoi", "utf8", "argminmax"].contains(arguments[2]) else {
+      fail("Local rendering supports integer, UTF-8, and extrema artifacts")
     }
     let record = @json.parse(@fs.read_text(arguments[3]))
     let markdown = if arguments[2] == "utf8" {
       validate_local_utf8(record)
       utf8_report([record], is_local=true)
+    } else if arguments[2] == "argminmax" {
+      validate_local_argminmax(record)
+      argminmax_report([record], is_local=true)
     } else {
       validate_local_atoi(record)
       atoi_report([record], is_local=true)
@@ -2970,5 +3010,575 @@ async fn main {
       Json(records).stringify(indent=2),
     )
     println("Generated \{directory}/BENCHMARK.md")
+  }
+}
+
+///|
+/// Defines the extrema inventory independently of the benchmark collector.
+fn expected_argminmax_names() -> Map[String, Unit] {
+  let workloads : Array[(String, Int32, Int32)] = []
+  for
+    (kind, width) in [
+      ("u8", 1),
+      ("i8", 1),
+      ("u16", 2),
+      ("i16", 2),
+      ("u32", 4),
+      ("i32", 4),
+      ("u64", 8),
+      ("i64", 8),
+      ("f32", 4),
+      ("f64", 8),
+      ("f16", 2),
+      ("bf16", 2),
+      ("u128", 16),
+      ("i128", 16),
+    ] {
+    for length in [33, 4096] {
+      workloads.push(("argminmax-" + kind, length * width, 0))
+    }
+  }
+  for (kind, width) in [("i32", 4), ("f64", 8)] {
+    workloads.push(("argminmax-" + kind, 0, 0))
+    for (length, offset) in [(4096, 1), (1048576, 0), (1048576, 1)] {
+      workloads.push(("argminmax-" + kind, length * width, offset))
+    }
+    for operation in ["min", "max"] {
+      workloads.push(("arg" + operation + "-" + kind, 4096 * width, 0))
+    }
+  }
+  for (kind, width) in [("f32", 4), ("f64", 8)] {
+    for position in ["first", "last"] {
+      for policy in ["ignore", "propagate"] {
+        workloads.push(
+          (policy + "-nan-" + position + "-" + kind, 4096 * width, 0),
+        )
+      }
+    }
+  }
+  for pattern in ["dense", "sparse", "all-null", "nan-null"] {
+    workloads.push(("masked-" + pattern + "-f64", 32768, 0))
+  }
+  for (kind, width) in [("u8", 1), ("u16", 2)] {
+    workloads.push(("index-boundary-" + kind, 131105 * width, 0))
+  }
+  let expected : Map[String, Unit] = Map([])
+  for (label, bytes, offset) in workloads {
+    for implementation in ["own-scalar", "own-simd", "baseline"] {
+      expected[label +
+      ":" +
+      implementation +
+      ":" +
+      bytes.to_string() +
+      ":" +
+      offset.to_string()] = ()
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects substituted lengths, kinds, operations, offsets, and duplicate extrema cases.
+fn validate_argminmax_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_argminmax_names()
+  guard summaries.length() == expected.length() else {
+    fail("Expected 162 extrema cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected or duplicate extrema case: " + name)
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Missing extrema cases") }
+}
+
+///|
+/// Checks finite quartiles and integral batch sizes against the recorded distributions.
+fn validate_argminmax_statistics(summary : Json) -> Unit raise {
+  guard array(summary, "quartiles")
+    is [Number(low, ..), Number(middle, ..), Number(high, ..)] else {
+    fail("Extrema quartiles require three numeric values")
+  }
+  let minimum = number(summary, "min")
+  let maximum = number(summary, "max")
+  let tolerance = maximum.abs() * 0.000000000001 + 0.000000000001
+  guard low.is_finite() &&
+    middle.is_finite() &&
+    high.is_finite() &&
+    minimum <= low + tolerance &&
+    low <= middle + tolerance &&
+    middle <= high + tolerance &&
+    high <= maximum + tolerance &&
+    (middle - number(summary, "median")).abs() <= tolerance else {
+    fail("Invalid extrema quartile range")
+  }
+  for
+    statistic in [
+      "sum", "variance", "median_abs_dev", "median_abs_dev_pct", "iqr",
+    ] {
+    guard number(summary, statistic) >= 0 else {
+      fail("Invalid extrema statistic: " + statistic)
+    }
+  }
+  let batch = number(summary, "batch_size")
+  guard batch >= 1 &&
+    batch.floor() == batch &&
+    (number(summary, "iqr") - (high - low)).abs() <= tolerance &&
+    (number(summary, "sum") - number(summary, "mean") * number(summary, "runs")).abs() <=
+    tolerance * 10 else {
+    fail("Inconsistent extrema distribution or batch metadata")
+  }
+}
+
+///|
+/// Specifies numeric widths and exact timer boundaries for the extrema port.
+fn argminmax_workload_metadata() -> Json {
+  {
+    "cases_per_backend": 162,
+    "elements": [0, 33, 4096, 131105, 1048576],
+    "name_fields": [
+      "operation-and-kind", "implementation", "numeric-bytes", "element-offset",
+    ],
+    "validity_bit_offset": 3,
+    "widths": {
+      "u8": 1,
+      "i8": 1,
+      "u16": 2,
+      "i16": 2,
+      "u32": 4,
+      "i32": 4,
+      "u64": 8,
+      "i64": 8,
+      "f32": 4,
+      "f64": 8,
+      "f16": 2,
+      "bf16": 2,
+      "u128": 16,
+      "i128": 16,
+    },
+    "input_storage": "Prepared typed arrays and offset-one views; wrapper construction and bitmap generation are outside timing",
+    "timed": "Public calls or the independent reference, callback dispatch, optional-result adapters, bitmap validation, and bench.keep",
+  }
+}
+
+///|
+/// Verifies pinned source provenance and the development-only linear baseline.
+fn validate_argminmax_metadata(record : Json) -> Unit raise {
+  if text(record, "source") == "github-actions" {
+    let repository = text(record, "repository").split("/").to_array()
+    guard repository is [owner, project] &&
+      !owner.is_empty() &&
+      !project.is_empty() else {
+      fail("Missing extrema CI repository identity")
+    }
+  }
+  let upstream = field(record, "ported_upstream")
+  guard number(record, "schema_version") == 1 &&
+    text(upstream, "package") == "argminmax" &&
+    text(upstream, "version") == "0.7.1" &&
+    text(upstream, "revision") == "f68aba5c251e9dc093f3939c0f9607c942228311" &&
+    text(upstream, "crate_sha256") ==
+    "088a9c28ca36500c581f9f54b63460492d2b4f71e1e61d176e8fb79565109b01" &&
+    text(upstream, "license") == "MIT" &&
+    field(upstream, "timed") == Json::boolean(false) &&
+    field(record, "workload_metadata") == argminmax_workload_metadata() &&
+    text(record, "module_manifest").has_prefix("name = \"justjavac/argminmax\"") &&
+    text(record, "comparison_manifest").find("justjavac/argminmax@0.1.0")
+    is Some(_) else {
+    fail("Missing or changed argminmax source or workload provenance")
+  }
+  let dependencies = array(record, "comparison_dependencies")
+  guard dependencies.length() == 1 else {
+    fail("Expected one independent extrema baseline")
+  }
+  let baseline = dependencies[0]
+  guard text(baseline, "label") == "baseline" &&
+    text(baseline, "package") == "justjavac/benchmarks/argminmax" &&
+    text(baseline, "version") == "0.1.0" &&
+    text(baseline, "core_version") != "" &&
+    text(baseline, "license") == "MIT" &&
+    text(baseline, "api") != "" else {
+    fail("Invalid extrema baseline metadata")
+  }
+}
+
+///|
+/// Validates four local backends without admitting their results as a CI snapshot.
+fn validate_local_argminmax(record : Json) -> Unit raise {
+  guard text(record, "module") == "justjavac/argminmax" &&
+    text(record, "source") == "local" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" &&
+    text(record, "run_attempt") == "" &&
+    ["linux", "macos", "windows"].contains(text(record, "os")) &&
+    text(field(record, "cpu"), "model") != "" else {
+    fail("The local renderer requires a local extrema collector artifact")
+  }
+  validate_argminmax_metadata(record)
+  let backends = array(record, "backends")
+  guard backends.length() == 4 else {
+    fail("Local extrema reports require all four backends")
+  }
+  let names : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !names.contains(name) else { fail("Duplicate local extrema backend") }
+    names[name] = ()
+    validate_backend(backend, "argminmax")
+  }
+}
+
+///|
+/// Renders three comparable extrema adapters using numeric bytes and element offsets.
+fn argminmax_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  bytes : String,
+  offset : String,
+  units : String,
+) -> Unit raise {
+  results_table(
+    builder,
+    records,
+    title,
+    workload,
+    bytes,
+    offset,
+    units,
+    @string.parse_int(bytes).to_double(),
+    implementations=["own-scalar", "own-simd", "baseline"],
+    labels=["ours scalar", "ours SIMD request", "linear reference"],
+  )
+}
+
+///|
+/// Builds focused extrema tables while retaining all 162 cases in the companion JSON.
+fn argminmax_report(
+  records : Array[Json],
+  is_local~ : Bool = false,
+) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# ArgMinMax performance comparison\n\n")
+  if is_local {
+    builder.write_string(
+      "**Local measurements.** CPU: " +
+      cell(text(field(first, "cpu"), "model")) +
+      ". Recorded checkout: `" +
+      text(first, "source_commit") +
+      "`; working tree dirty: " +
+      field(first, "working_tree_dirty").stringify() +
+      ".\n\n",
+    )
+  } else {
+    let revision = text(first, "source_commit")
+    builder.write_string(
+      "[CI run " +
+      text(first, "run_id") +
+      "](" +
+      text(first, "run_url") +
+      ") | [source " +
+      revision[:7].to_owned() +
+      "](https://github.com/" +
+      text(first, "repository") +
+      "/commit/" +
+      revision +
+      ") | attempt " +
+      text(first, "run_attempt") +
+      "\n\n",
+    )
+  }
+  let count = records.length() * 4 * 162
+  builder.write_string(
+    "**Scope:** " +
+    records.length().to_string() +
+    " operating system(s) × 4 backends × 162 cases = **" +
+    count.to_string() +
+    " measurements**. Every unrounded distribution and its provenance is preserved in the companion " +
+    (if is_local {
+      "`LOCAL-BENCHMARK-DATA.json`"
+    } else {
+      "[BENCHMARK-DATA.json](BENCHMARK-DATA.json)"
+    }) +
+    ".\n\n",
+  )
+  builder.write_string(
+    "The port follows `argminmax@0.7.1`, revision `f68aba5c251e9dc093f3939c0f9607c942228311`. The Rust crate is source provenance and is not timed here. The independent MoonBit linear reference and this library consume the same prepared values and return identical indices before timing. Correctness tests additionally use a sort-based oracle and exhaustive IEEE half-float formulas.\n\n" +
+    "## Timer and dispatch\n\n" +
+    "Typed arrays, half/wide wrappers, and offset-three validity bitmaps are prepared outside the timer. Public calls, bitmap validation, callback dispatch, single-index result adapters, and `bench.keep` are timed. Offset-one cases reuse a partial typed view without materialization. Numeric bytes describe element width; wrapper objects and bitmap storage are additional memory.\n\n" +
+    "Automatic searches use scalar code, with unmasked NaN-ignoring `argminmax` calls for `Float` and `Double` (at least 4096 elements) using vectors on linear-memory Wasm. The tables explicitly request scalar or SIMD. SIMD requests use gathered typed lanes on native/Wasm, scalar tails, and overflow-bounded indices; 128-bit elements, Wasm GC, and JavaScript use scalar fallback. Masked defaults and scalar-only backends use a direct scalar scan with overflow-safe byte/bit positioning; explicit native/Wasm vector requests use valid runs. Leading NaNs are skipped scalarly.\n\n" +
+    "Times are microseconds per invocation; nanoseconds multiply by 1000. **Bold** marks the smallest measured mean; `*` marks CV >= 5% and possible noise. A smaller mean does not establish statistical significance. Compare implementations within the same OS/backend. NaN propagation and all-null inputs can stop early or read only metadata, so these tables report latency rather than nominal throughput.\n\n" +
+    "The core runner calibrates for about 100 ms, records ten batch samples, and applies 5% winsorization. Submicrosecond cases use 100000 iterations per batch. Every record preserves `runs`, `batch_size`, quartiles, variance, mean, median, range, commands, UTC timestamps, CPU, toolchain, and dependencies.\n\n",
+  )
+  builder.write_string(
+    "## Measured tradeoffs\n\nFor 4096 elements, these ratios divide the SIMD request's mean latency by the scalar mean. Values below 1 favor the SIMD request; the detailed tables mark possible noise.\n\n",
+  )
+  for record in records {
+    let backends = array(record, "backends")
+    let native_position = backends
+      .search_by(backend => text(backend, "backend") == "native")
+      .unwrap_or_else(() => fail("Missing native extrema results"))
+    let wasm_position = backends
+      .search_by(backend => text(backend, "backend") == "wasm")
+      .unwrap_or_else(() => fail("Missing Wasm extrema results"))
+    let native_values = index(backends[native_position])
+    let wasm_values = index(backends[wasm_position])
+    let native_double = number(
+        native_values["argminmax-f64:own-simd:32768:0"],
+        "mean",
+      ) /
+      number(native_values["argminmax-f64:own-scalar:32768:0"], "mean")
+    let wasm_float = number(
+        wasm_values["argminmax-f32:own-simd:16384:0"],
+        "mean",
+      ) /
+      number(wasm_values["argminmax-f32:own-scalar:16384:0"], "mean")
+    let wasm_double = number(
+        wasm_values["argminmax-f64:own-simd:32768:0"],
+        "mean",
+      ) /
+      number(wasm_values["argminmax-f64:own-scalar:32768:0"], "mean")
+    builder.write_string(
+      "- **\{text(record, "os")}:** native Double \{decimal(native_double)}x; Wasm Float \{decimal(wasm_float)}x; Wasm Double \{decimal(wasm_double)}x.\n",
+    )
+  }
+  builder.write_string(
+    "\n## Runner context\n\n| OS | CPU | Architecture / logical CPUs | Runner / image | Node.js |\n| --- | --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(cpu, "model"))} | \{cell(text(cpu, "architecture"))} / \{display(field(cpu, "logical_cpus"))} | \{cell(text(record, "runner_label"))} / \{cell(text(record, "image_os"))} / \{cell(text(record, "image_version"))} | \{cell(text(record, "node"))} |\n",
+    )
+  }
+  builder.write_string("\n")
+  for
+    (title, workload, bytes, offset, units) in [
+      ("4096 Int32 elements: latency (us)", "argminmax-i32", "16384", "0", "us"),
+      ("4096 Float elements: latency (us)", "argminmax-f32", "16384", "0", "us"),
+      (
+        "4096 Double elements: latency (us)", "argminmax-f64", "32768", "0", "us",
+      ),
+      ("33 Byte elements: latency (ns)", "argminmax-u8", "33", "0", "ns"),
+      (
+        "1,048,576 Int32 elements at offset one: latency (us)", "argminmax-i32",
+        "4194304", "1", "us",
+      ),
+      (
+        "Dense validity bitmap, 4096 Double elements: latency (us)", "masked-dense-f64",
+        "32768", "0", "us",
+      ),
+      (
+        "Last NaN propagation, 4096 Double elements: latency (us)", "propagate-nan-last-f64",
+        "32768", "0", "us",
+      ),
+    ] {
+    argminmax_table(builder, records, title, workload, bytes, offset, units)
+  }
+  builder.write_string(
+    "## Reproduction and toolchain\n\n```text\nmoon -C benchmarks test argminmax --target all\nmoon run scripts/benchmark.mbtx argminmax\nmoon run scripts/benchmark_report.mbtx --self-test\n```\n\n",
+  )
+  for record in records {
+    builder.write_string(
+      "**" +
+      text(record, "os") +
+      ":**\n\n~~~text\n" +
+      text(record, "toolchain") +
+      "\n~~~\n\n",
+    )
+  }
+  builder.write_string(
+    "Publish a snapshot from one complete CI run and attempt covering three systems and four backends. Raw artifacts remain available for 90 days. Local outputs retain their local label and dirty-checkout state.\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Builds complete, isolated extrema artifacts for report validation regressions.
+fn argminmax_snapshot_fixture(statistics : Json) -> Array[Json] raise {
+  let distribution = test_field(
+    test_field(statistics, "std_dev", 0.1),
+    "std_dev_pct",
+    10,
+  )
+  let summaries : Array[Json] = []
+  for (name, _) in expected_argminmax_names() {
+    summaries.push(test_field(distribution, "name", Json(name)))
+  }
+  let backends : Array[Json] = []
+  for name in ["native", "wasm", "wasm-gc", "js"] {
+    backends.push({
+      "backend": name,
+      "time_unit": "microseconds",
+      "command": "moon -C benchmarks bench --target " +
+      name +
+      " --release --no-parallelize -p justjavac/benchmarks/argminmax",
+      "started_at_utc": "2026-11-25T00:00:00Z",
+      "finished_at_utc": "2026-11-25T00:01:00Z",
+      "summaries": Json(summaries),
+    })
+  }
+  let output : Array[Json] = []
+  for os in ["linux", "macos", "windows"] {
+    output.push({
+      "schema_version": 1,
+      "module": "justjavac/argminmax",
+      "source": "github-actions",
+      "source_commit": "0123456789012345678901234567890123456789",
+      "repository": "example/fixture",
+      "run_id": "123",
+      "run_attempt": "1",
+      "run_url": "https://github.com/example/fixture/actions/runs/123",
+      "os": os,
+      "cpu": {
+        "model": "schema fixture",
+        "architecture": "fixture",
+        "logical_cpus": 1,
+      },
+      "runner_label": "fixture",
+      "image_os": "fixture",
+      "image_version": "fixture",
+      "node": "fixture",
+      "toolchain": "moonc fixture",
+      "working_tree_dirty": false,
+      "module_manifest": "name = \"justjavac/argminmax\"\nversion = \"0.1.0\"\n",
+      "comparison_manifest": "justjavac/argminmax@0.1.0\n",
+      "comparison_dependencies": [
+        {
+          "label": "baseline",
+          "package": "justjavac/benchmarks/argminmax",
+          "version": "0.1.0",
+          "core_version": "fixture",
+          "license": "MIT",
+          "api": "independent linear reference",
+        },
+      ],
+      "ported_upstream": {
+        "package": "argminmax",
+        "version": "0.7.1",
+        "revision": "f68aba5c251e9dc093f3939c0f9607c942228311",
+        "crate_sha256": "088a9c28ca36500c581f9f54b63460492d2b4f71e1e61d176e8fb79565109b01",
+        "license": "MIT",
+        "timed": false,
+      },
+      "workload_metadata": argminmax_workload_metadata(),
+      "backends": Json(backends),
+    })
+  }
+  output
+}
+
+///|
+/// Protects extrema inventories, distribution metadata, provenance, and local/CI separation.
+fn argminmax_self_test(statistics : Json) -> Unit raise {
+  assert_eq(expected_argminmax_names().length(), 162)
+  validate_argminmax_statistics(statistics)
+  let snapshots = argminmax_snapshot_fixture(statistics)
+  validate_snapshot(snapshots, "argminmax")
+  let rendered = argminmax_report(snapshots)
+  assert_true(rendered.find("1944 measurements") is Some(_))
+  assert_true(rendered.find("4096 Float elements") is Some(_))
+  assert_true(
+    rendered.find("native Double 1x; Wasm Float 1x; Wasm Double 1x") is Some(_),
+  )
+  assert_true(rendered.find("Runner context") is Some(_))
+  let crlf = snapshots.copy()
+  crlf[1] = test_field(
+    crlf[1],
+    "module_manifest",
+    Json(text(crlf[1], "module_manifest").replace_all(old="\n", new="\r\n")),
+  )
+  validate_snapshot(crlf, "argminmax")
+  for
+    (key, replacement) in [
+      ("source_commit", Json("1123456789012345678901234567890123456789")),
+      ("run_attempt", Json("2")),
+      ("run_attempt", Json("")),
+      ("source", Json("local")),
+      ("repository", Json("")),
+      ("working_tree_dirty", Json::boolean(true)),
+      ("module_manifest", Json("name = \"justjavac/argminmax\"\nchanged\n")),
+      ("comparison_manifest", Json("changed")),
+      (
+        "ported_upstream",
+        test_field(
+          field(snapshots[0], "ported_upstream"),
+          "revision",
+          "changed",
+        ),
+      ),
+      (
+        "workload_metadata",
+        test_field(
+          field(snapshots[0], "workload_metadata"),
+          "cases_per_backend",
+          161,
+        ),
+      ),
+      ("comparison_dependencies", Json(([] : Array[Json]))),
+      ("backends", Json(array(snapshots[0], "backends")[:3].to_owned())),
+    ] {
+    let changed = snapshots.copy()
+    changed[1] = test_field(changed[1], key, replacement)
+    try validate_snapshot(changed, "argminmax") catch {
+      _ => ()
+    } noraise {
+      _ => fail("Malformed extrema snapshot accepted: " + key)
+    }
+  }
+  try validate_snapshot(snapshots[:2].to_owned(), "argminmax") catch {
+    _ => ()
+  } noraise {
+    _ => fail("Partial extrema OS matrix accepted")
+  }
+  let original = array(array(snapshots[0], "backends")[0], "summaries")
+  for
+    replacement in [
+      test_field(original[0], "name", "argminmax-i32:own-scalar:16383:0"),
+      original[1],
+    ] {
+    let changed = original.copy()
+    changed[0] = replacement
+    try validate_argminmax_inventory(changed) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Substituted extrema inventory accepted")
+    }
+  }
+  for
+    replacement in [
+      test_field(original[0], "batch_size", 1.5),
+      test_field(original[0], "quartiles", Json([2, 1, 0])),
+    ] {
+    try validate_argminmax_statistics(replacement) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Malformed extrema distribution accepted")
+    }
+  }
+  let local_record = test_field(
+    test_field(
+      test_field(test_field(snapshots[0], "source", "local"), "run_id", ""),
+      "run_attempt",
+      "",
+    ),
+    "run_url",
+    "",
+  )
+  validate_local_argminmax(local_record)
+  assert_true(
+    argminmax_report([local_record], is_local=true).find("Local measurements")
+    is Some(_),
+  )
+  try
+    validate_snapshot([local_record, snapshots[1], snapshots[2]], "argminmax")
+  catch {
+    _ => ()
+  } noraise {
+    _ => fail("Local extrema measurements accepted as CI")
   }
 }
