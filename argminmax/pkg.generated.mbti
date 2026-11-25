@@ -1,0 +1,113 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/argminmax"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn[T : Element] argmax(ArrayView[T], simd? : Bool) -> Int32?
+
+pub fn[T : Element] argmax_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> Int32? raise BitmapError
+
+pub fn[T : Element] argmin(ArrayView[T], simd? : Bool) -> Int32?
+
+pub fn[T : Element] argmin_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> Int32? raise BitmapError
+
+pub fn[T : Element] argminmax(ArrayView[T], simd? : Bool) -> (Int32, Int32)?
+
+pub fn[T : Element] argminmax_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> (Int32, Int32)? raise BitmapError
+
+pub fn[T : Element] nanargmax(ArrayView[T], simd? : Bool) -> Int32?
+
+pub fn[T : Element] nanargmax_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> Int32? raise BitmapError
+
+pub fn[T : Element] nanargmin(ArrayView[T], simd? : Bool) -> Int32?
+
+pub fn[T : Element] nanargmin_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> Int32? raise BitmapError
+
+pub fn[T : Element] nanargminmax(ArrayView[T], simd? : Bool) -> (Int32, Int32)?
+
+pub fn[T : Element] nanargminmax_masked(ArrayView[T], BytesView, offset? : Int32, simd? : Bool) -> (Int32, Int32)? raise BitmapError
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub(all) suberror BitmapError {
+  InvalidOffset(Int32)
+  InsufficientBits(required~ : Int64, available~ : Int64)
+}
+
+// Types and methods
+#derive(@debug.Debug)
+pub struct BFloat16 {
+  // private fields
+}
+pub fn BFloat16::from_bits(UInt16) -> Self
+pub fn BFloat16::is_nan(Self) -> Bool
+pub fn BFloat16::to_bits(Self) -> UInt16
+pub fn BFloat16::to_double(Self) -> Double
+pub impl Element for BFloat16
+pub impl Compare for BFloat16
+pub impl Eq for BFloat16
+
+#derive(@debug.Debug)
+pub struct Float16 {
+  // private fields
+}
+pub fn Float16::from_bits(UInt16) -> Self
+pub fn Float16::is_nan(Self) -> Bool
+pub fn Float16::to_bits(Self) -> UInt16
+pub fn Float16::to_double(Self) -> Double
+pub impl Element for Float16
+pub impl Compare for Float16
+pub impl Eq for Float16
+
+#derive(Eq, @debug.Debug)
+pub struct Int128 {
+  // private fields
+}
+pub fn Int128::from_int64(Int64) -> Self
+pub fn Int128::from_words(high~ : Int64, low~ : UInt64) -> Self
+pub fn Int128::high(Self) -> Int64
+pub fn Int128::low(Self) -> UInt64
+pub impl Element for Int128
+pub impl Compare for Int128
+
+#derive(Eq, @debug.Debug)
+pub struct Int8 {
+  // private fields
+}
+pub fn Int8::from_bits(Byte) -> Self
+pub fn Int8::from_int(Int32) -> Self?
+pub fn Int8::to_bits(Self) -> Byte
+pub fn Int8::to_int(Self) -> Int32
+pub impl Element for Int8
+pub impl Compare for Int8
+
+#derive(Eq, @debug.Debug)
+pub struct UInt128 {
+  // private fields
+}
+pub fn UInt128::from_uint64(UInt64) -> Self
+pub fn UInt128::from_words(high~ : UInt64, low~ : UInt64) -> Self
+pub fn UInt128::high(Self) -> UInt64
+pub fn UInt128::low(Self) -> UInt64
+pub impl Element for UInt128
+pub impl Compare for UInt128
+
+// Type aliases
+
+// Traits
+pub(open) trait Element : Compare {
+  fn is_nan(Self) -> Bool = _
+  fn find_extrema(ArrayView[Self], minimum~ : Bool, maximum~ : Bool, propagate_nan~ : Bool, simd~ : Bool?) -> (Int32, Int32)? = _
+}
+pub impl Element for Byte
+pub impl Element for Int32
+pub impl Element for Int16
+pub impl Element for Int64
+pub impl Element for UInt32
+pub impl Element for UInt16
+pub impl Element for UInt64
+pub impl Element for Float
+pub impl Element for Double

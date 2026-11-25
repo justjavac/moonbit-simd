@@ -21,6 +21,7 @@ library modules.
 | `justjavac/utf8` | Strict UTF-8 validation, precise errors, and streaming, ported from simdutf8 | [Guide](utf8/README.md) · [Examples](utf8/README.mbt.md) | [BENCHMARK.md](utf8/BENCHMARK.md) |
 | `justjavac/base64` | RFC 4648 Base64 and WHATWG forgiving decoding, ported from base64-simd | [Guide](base64/README.md) · [Examples](base64/README.mbt.md) | [BENCHMARK.md](base64/BENCHMARK.md) |
 | `justjavac/atoi` | Decimal byte-to-integer parsing, exact prefixes, and 8–128-bit ranges, ported from atoi_simd | [Guide](atoi/README.md) · [Examples](atoi/README.mbt.md) | [BENCHMARK.md](atoi/BENCHMARK.md) |
+| `justjavac/argminmax` | Extrema indices for fourteen numeric kinds, NaN policies, and validity bitmaps, ported from argminmax | [Guide](argminmax/README.md) · [Examples](argminmax/README.mbt.md) | [BENCHMARK.md](argminmax/BENCHMARK.md) |
 | `justjavac/memchr` | Byte unions, double-ended matches, and reusable Two-Way substring search, ported from memchr | [Guide](memchr/README.md) · [Examples](memchr/README.mbt.md) | [BENCHMARK.md](memchr/BENCHMARK.md) |
 | `justjavac/uuid` | UUID text/byte parsing, formatting, and reusable output buffers, ported from uuid-simd | [Guide](uuid/README.md) · [Examples](uuid/README.mbt.md) | [BENCHMARK.md](uuid/BENCHMARK.md) |
 
@@ -64,7 +65,7 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi uuid ryu memchr
+moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi argminmax uuid ryu memchr
 ```
 
 ## Benchmarks
@@ -94,6 +95,10 @@ Integer adapters compare scalar/SIMD decimal parsing with bundled core string
 parsers and bounded BigInt. Required UTF-8 conversion, prefix scans, and range
 checks remain inside the timer.
 
+Extrema adapters compare scalar/SIMD requests with an independent linear
+MoonBit reference over the same fourteen numeric kinds, NaN policies, and
+validity bitmaps. The pinned Rust crate supplies source provenance.
+
 Reproduce locally from the repository root:
 
 ```text
@@ -103,6 +108,7 @@ moon run scripts/benchmark.mbtx url
 moon run scripts/benchmark.mbtx utf8
 moon run scripts/benchmark.mbtx base64
 moon run scripts/benchmark.mbtx atoi
+moon run scripts/benchmark.mbtx argminmax
 moon run scripts/benchmark.mbtx uuid
 moon run scripts/benchmark.mbtx ryu
 moon run scripts/benchmark.mbtx memchr

@@ -33,11 +33,11 @@ async fn main {
   }
   guard !directories.is_empty() else { fail("At least one module is required") }
   for module_dir in directories {
-    guard ["crc32", "url", "utf8", "base64", "atoi", "uuid", "ryu", "memchr"].contains(
-      module_dir,
-    ) else {
+    guard [
+      "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
+    ].contains(module_dir) else {
       fail(
-        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, uuid, ryu, or memchr",
+        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, argminmax, uuid, ryu, or memchr",
       )
     }
     let packages = if module_dir == "memchr" {
