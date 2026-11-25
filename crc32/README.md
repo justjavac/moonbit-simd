@@ -4,6 +4,10 @@ Portable IEEE CRC-32 for MoonBit, with one-shot hashing, incremental state,
 checksum continuation, combination of independently processed blocks, and an
 optional SIMD implementation. Licensed under [MIT](LICENSE).
 
+Production code is pure MoonBit, using core SIMD intrinsics without authored
+C/C++, Rust, assembly, FFI bindings, or native-library dependencies. The native
+backend's generated C and standard runtime are MoonBit toolchain artifacts.
+
 For a short executable introduction, see [README.mbt.md](README.mbt.md).
 For formal signatures, see [pkg.generated.mbti](pkg.generated.mbti).
 
@@ -201,18 +205,21 @@ if the count would exceed `2^64 - 1`.
 Both implementations derive their slicing tables from the same reflected
 polynomial once at startup. Sixteen tables occupy 16 KiB. Scalar code consumes
 eight-byte blocks and a bytewise tail. Vector code safely loads sixteen bytes,
-uses four 32-bit lanes for shifts, masks, and XOR reduction, performs positional
-table lookups, and sends the remaining short tail to scalar code.
+extracts each of the four little-endian words once, folds sixteen positional
+table lookups with scalar XORs, and sends the remaining short tail to scalar code.
+Table indices combine a fixed slice number with a byte in `0..255`; their proven
+bounds allow unchecked table reads while input loads remain length-checked.
 
 The core SIMD API does not provide a general table-gather operation, so table
 reads remain scalar. This implementation uses portable SIMD operations rather
 than x86 PCLMULQDQ, AArch64 CRC instructions, or runtime CPU feature detection.
 It has no module-specific FFI or architecture-dependent compiler flags.
 
-Little-endian bitstring patterns define input order on every host. The
-`v128le` pattern checks that sixteen bytes are available before loading, including
-when a view starts at an unaligned offset. Tests compare both implementations to
-an independent forward-polynomial bitwise oracle.
+Little-endian scalar patterns and vector lane order define input order on every
+host. The vector loop rounds the view's length down to complete sixteen-byte
+blocks and adds its start offset to each load. This avoids per-block view
+bookkeeping while preserving unaligned views and excluding bytes outside them.
+Tests compare both implementations to an independent forward-polynomial oracle.
 
 Use a MoonBit nightly providing `moonbitlang/core/simd` and the built-in `V128`
 type. The older `moonbitlang/core/v128` path is deprecated. The validated compiler
@@ -238,6 +245,16 @@ Scalar processing remains the default based on the initial local measurements.
 The vector path still performs scalar table lookups, so SIMD requests can be
 slower. Use the report for the measured backend and machine; hosted-runner results
 do not establish a universal speed guarantee.
+
+The software path in Rust `crc32c` 0.6.9 also uses slicing-by-eight, with an
+8 KiB table and aligned 64-bit words. Its faster hardware path processes three
+independent chains with x86 SSE4.2 or optionally enabled ARM CRC instructions,
+then combines them with precomputed shift tables. Those instructions compute
+Castagnoli CRC32C (`0x82F63B78` reflected; `123456789` = `0xE3069283`), which
+differs from this module's IEEE CRC32. This optimization keeps the existing
+polynomial and public API, removes redundant table bounds checks, and avoids
+repeated lane extraction and vector reconstruction. It adds no hardware binding,
+parallel-chain framework, or runtime feature dispatcher.
 
 Run the same suite locally:
 
@@ -279,12 +296,17 @@ moon info
 moon fmt
 ```
 
-Coverage:
+Coverage, from the repository root:
 
 ```text
-moon test --target all --enable-coverage
-moon coverage analyze -p justjavac/crc32 -- -f cobertura -o coverage-crc32.xml
+moon test crc32 --target native --enable-coverage
+moon run scripts/coverage_report.mbtx local crc32
 ```
+
+An existing build directory can retain incompatible runtime counters after
+source or backend changes. Use `moon coverage clean` before fresh collection,
+or pass `-t <runtime-log>` to the reporter with only the current native run's
+logs when preserving another task's coverage data.
 
 Tests include standard reference vectors; all single-byte values; nonzero
 initial checksums; empty updates; vector and scalar block boundaries; unaligned
@@ -296,11 +318,11 @@ Coverage uploads are managed by the parent workspace's GitHub Actions workflow,
 with separate Codecov flags for Linux, macOS, and Windows. See the workspace
 README for Codecov setup and the four coverage badges.
 
-The initial Windows Cobertura report records 98.75% coverage (79/80 instrumented
-locations). Its remaining location is the managed-backend dispatch wrapper,
-which is exercised by the JavaScript and Wasm GC test runs but is not included
-in the default analysis's merged counters. Generate API documentation with
-`moon doc` from this module, or `moon -C crc32 doc` from the workspace root.
+Native coverage uses native trace metadata only; managed-backend fallback
+correctness is verified separately by the Wasm GC and JavaScript tests. Export
+coverage immediately after instrumented tests, before running another backend
+or changing sources. Generate API documentation with `moon doc` from this
+module, or `moon -C crc32 doc` from the workspace root.
 
 ## References and license
 
@@ -308,6 +330,9 @@ in the default analysis's merged counters. Generate API documentation with
   algorithm design context, and golden checksum-combination vectors.
 - [crc32fast source](https://github.com/srijs/rust-crc32fast): reference baseline
   and combination behavior.
+- [crc32c 0.6.9 source](https://github.com/zowens/crc32c/tree/3098a6edd7b1cb28198e3048889907b7160043e4):
+  software slicing and hardware-chain design reference, using the distinct
+  Castagnoli polynomial. No Rust source is incorporated into this module.
 - [MoonBit SIMD API](https://mooncakes.io/docs/moonbitlang/core/simd): current
   portable vector operations.
 - [Original v128 documentation](https://mooncakes.io/docs/moonbitlang/core/v128):

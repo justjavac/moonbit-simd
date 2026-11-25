@@ -6,6 +6,11 @@ maintenance. Module READMEs define their algorithms and public contracts.
 
 ## Repository structure
 
+- Implement production libraries in pure MoonBit using MoonBit packages and
+  standard SIMD intrinsics. Do not add C/C++, Rust, assembly, FFI bindings,
+  native stubs, or native-library dependencies as implementation shortcuts.
+  MoonBit's generated native C and standard runtime remain toolchain artifacts;
+  do not commit or maintain generated backend sources.
 - The root is a workspace, not a publishable umbrella module. Module
   `justjavac/xxx` belongs directly in `xxx/`, with its `moon.mod`, root
   `moon.pkg`, and source files; do not add an unnecessary `src/` directory.
@@ -112,14 +117,20 @@ options(
 - Derive or explain lookup tables and allocate reusable tables outside hot loops.
   Vectorize independent work while keeping state transitions and tails explicit.
   Avoid speculative abstractions and dependencies that replace a few simple lines.
+- Use unchecked table reads only when fixed table sizes and masked indices prove
+  every access is in range; explain that invariant beside the hot loop and test
+  byte/index extremes independently. Keep input loads bounded by the actual view.
+- Minimize vector-to-scalar round trips when portable SIMD lacks table gather.
+  Inspect generated loops before rewriting them: scalar bitstring patterns can
+  already lower to offsets, while vector patterns may retain view bookkeeping.
 - Portable vector operations are not hardware CRC or carry-less multiplication.
   Do not assume x86, ARM, or optional CPU instructions; architecture-specific
   acceleration needs feature checks and a safe fallback.
-- Measure the whole public operation before selecting a default. In the
-  [CRC32 CI snapshot](crc32/BENCHMARK.md), SIMD was slower than scalar for 1 MiB
-  owned input on native and faster on linear-memory Wasm; other workloads differ.
-  Scalar table lookups and lane extraction still cost time. Choose from measured
-  backend/workload results rather than the presence of a vector instruction.
+- Measure the whole public operation before selecting a default, including table
+  lookups and lane extraction. Compare old and new implementations in the same
+  process with reversed measurement order, then use the complete
+  [CRC32 CI snapshot](crc32/BENCHMARK.md) to assess other systems and public API
+  adapters. Dispatch must follow measured backend/workload results.
 
 On 2026-11-24, the validated tools were `moon 0.1.20261120` and
 `moonc v0.10.22+7b085e9a4-nightly` (2026-11-22). CI selects the nightly channel
@@ -216,6 +227,10 @@ revalidate APIs, fallbacks, and benchmark assumptions after toolchain changes.
   Automatic metadata discovery can mix built backends or search for unrelated
   files. Coverage reporter options such as `-p` belong after `moon coverage report --`.
   Extend the exporter when adding modules or changing the instrumented package layout.
+- When sources or targets change, stale `_build/moonbit_coverage_*.txt` runtime
+  logs can disagree with current counter layouts. Use `moon coverage clean`
+  before fresh collection, or select only current native logs with reporter
+  `-t <runtime-log>`; preserve other tasks' logs in a shared workspace.
 - Upload only the configured module reports, together under the OS's `linux`,
   `macos`, or `windows` Codecov flag, with `disable_search: true` and GitHub OIDC.
   Keep total and three per-OS badges aligned with the repository/default branch;

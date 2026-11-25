@@ -59,6 +59,42 @@ test "scalar CRC covers every possible single byte and custom initial state" {
 }
 
 ///|
+test "slicing lookups cover every byte value in every block position" {
+  for position in 0..<16 {
+    for byte in 0..<256 {
+      let source = Bytes::makei(32, i => {
+        if i == position + 1 {
+          byte.to_byte()
+        } else {
+          0
+        }
+      })
+      let view = source[1:17]
+      for initial in [0U, 0xFFFFFFFFU] {
+        let expected = reference_crc(initial, view)
+        assert_eq(update_dispatch(initial, view, false), expected)
+        assert_eq(update_dispatch(initial, view, true), expected)
+      }
+    }
+  }
+}
+
+///|
+test "all short tails preserve unaligned view boundaries and continuation" {
+  let source = sample_bytes(96)
+  for offset in [0, 1, 7, 15] {
+    for length in 0..<49 {
+      let view = source[offset:offset + length]
+      for initial in [0U, 0x12345678U, 0xFFFFFFFFU] {
+        let expected = reference_crc(initial, view)
+        assert_eq(update_dispatch(initial, view, false), expected)
+        assert_eq(update_dispatch(initial, view, true), expected)
+      }
+    }
+  }
+}
+
+///|
 #cfg(any(target="native", target="wasm"))
 test "SIMD CRC agrees with the oracle on unaligned blocks and short tails" {
   let data = sample_bytes(16417)
