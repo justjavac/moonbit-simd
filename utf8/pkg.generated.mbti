@@ -1,0 +1,32 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/utf8"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn from_utf8(BytesView, simd? : Bool) -> String raise Utf8Error
+
+pub fn is_valid(BytesView, simd? : Bool) -> Bool
+
+pub fn validate(BytesView, simd? : Bool) -> Unit raise Utf8Error
+
+// Errors
+#derive(Eq, @debug.Debug)
+type Utf8Error
+pub fn Utf8Error::error_len(Self) -> Int32?
+pub fn Utf8Error::valid_up_to(Self) -> Int32
+pub impl Show for Utf8Error
+
+// Types and methods
+type Validator
+pub fn Validator::copy(Self) -> Self
+pub fn Validator::finalize(Self) -> Bool
+pub fn Validator::new(simd? : Bool) -> Self
+pub fn Validator::reset(Self) -> Unit
+pub fn Validator::update(Self, BytesView) -> Unit
+
+// Type aliases
+
+// Traits

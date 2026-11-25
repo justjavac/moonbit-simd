@@ -1,0 +1,33 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "tonyfettes/utf8"
+
+import {
+  "moonbitlang/core/json",
+}
+
+// Values
+pub fn decode(BytesView) -> String raise Malformed
+
+pub fn decode_lossy(BytesView) -> String
+
+pub fn encode(StringView) -> Bytes
+
+// Errors
+pub suberror Malformed {
+  Malformed(BytesView)
+}
+
+// Types and methods
+type Utf8
+#as_free_fn
+pub fn Utf8::of_bytes(Bytes) -> Self raise Malformed
+#as_free_fn
+pub fn Utf8::of_bytesview(BytesView) -> Self raise Malformed
+pub fn Utf8::to_bytes(Self) -> Bytes
+pub fn Utf8::to_string(Self) -> String
+pub impl Show for Utf8
+pub impl @json.ToJson for Utf8
+
+// Type aliases
+
+// Traits

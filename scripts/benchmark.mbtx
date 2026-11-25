@@ -155,6 +155,97 @@ fn summaries(output : String) -> Array[Json] raise {
 }
 
 ///|
+/// Defines exact UTF-8 workloads, byte counts, modes, view offsets, and stream sizes.
+fn expected_utf8_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length) in [
+      ("empty", 0),
+      ("ascii-15", 15),
+      ("ascii-64", 64),
+      ("ascii-4k", 4096),
+      ("ascii-1m", 1048576),
+      ("latin-4k", 4096),
+      ("cjk-4k", 4095),
+      ("emoji-4k", 4096),
+      ("mixed-4k", 4096),
+      ("cjk-1m", 1048575),
+      ("emoji-1m", 1048576),
+    ] {
+    let offsets = if ["ascii-4k", "cjk-4k", "emoji-4k"].contains(label) {
+      [0, 1]
+    } else {
+      [0]
+    }
+    for prefix in ["validate-", "decode-"] {
+      let implementations = if prefix == "validate-" {
+        [
+          "own-basic-scalar", "own-basic-simd", "own-compat", "tonyfettes", "core",
+        ]
+      } else {
+        ["own-scalar", "own-simd", "tonyfettes", "core"]
+      }
+      for implementation in implementations {
+        for offset in offsets {
+          expected["\{prefix}\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for
+    label in [
+      "invalid-start", "invalid-end", "invalid-overlong", "invalid-truncated",
+    ] {
+    for
+      implementation in [
+        "own-basic-scalar", "own-basic-simd", "own-compat", "tonyfettes", "core",
+      ] {
+      expected["\{label}:\{implementation}:65536:0"] = ()
+    }
+  }
+  for label in ["ascii", "mixed"] {
+    for implementation in ["own-scalar", "own-simd"] {
+      for chunk in [1, 64, 4096] {
+        expected["stream-\{label}:\{implementation}:65536:\{chunk}"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects omitted or substituted UTF-8 cases before saving a measurement artifact.
+fn validate_utf8_inventory(records : Array[Json]) -> Unit raise {
+  let expected = expected_utf8_names()
+  guard records.length() == expected.length() else {
+    fail("Expected 158 UTF-8 cases")
+  }
+  for record in records {
+    match record {
+      { "name": String(name), .. } => {
+        guard expected.contains(name) else {
+          fail("Unexpected UTF-8 case: \{name}")
+        }
+        let _ = expected.remove(name)
+      }
+      _ => fail("Missing UTF-8 case name")
+    }
+  }
+  guard expected.is_empty() else { fail("Incomplete UTF-8 inventory") }
+}
+
+///|
+/// Extracts the bundled core's compiler version without platform-specific executable paths.
+fn bundled_core_version(toolchain : String) -> String raise {
+  for line in toolchain.split("\n") {
+    if line.find("moonc ") is Some(0) && line.find(")") is Some(end) {
+      return line[:end + 1].to_owned()
+    }
+  }
+  fail("Missing compiler version for the core UTF-8 comparison")
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
@@ -206,6 +297,11 @@ async fn main {
           "-p", "justjavac/benchmarks/url/own", "-p", "justjavac/benchmarks/url/tonyfettes",
           "-p", "justjavac/benchmarks/url/moonbitstack", "-p", "justjavac/benchmarks/url/connect0459",
         ]
+      } else if package_dir == "utf8" {
+        [
+          "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
+          "-p", "justjavac/benchmarks/utf8",
+        ]
       } else {
         [
           "bench",
@@ -230,6 +326,9 @@ async fn main {
         )
       }
       let records = summaries(output.stdout())
+      if package_dir == "utf8" {
+        validate_utf8_inventory(records)
+      }
       guard package_dir != "crc32" || records.length() == 69 else {
         fail("Expected 69 crc32 cases, received \{records.length()}")
       }
@@ -325,6 +424,25 @@ async fn main {
             "version": "0.6.0",
             "license": "Apache-2.0",
             "api": "parse(String), parse_with_base, href",
+          },
+        ]
+      } else if package_dir == "utf8" {
+        [
+          {
+            "label": "tonyfettes",
+            "package": "tonyfettes/utf8",
+            "version": "0.2.4",
+            "license": "Apache-2.0",
+            "api": "Utf8::of_bytesview, decode",
+            "compatibility_copy": "benchmarks/vendor/tonyfettes-utf8",
+            "original_source_sha256": "b1e652c7b968cb86ac38b9f9960b11b4b2736803a4f91082ae4d6287e3604690",
+          },
+          {
+            "label": "core",
+            "package": "moonbitlang/core/encoding/utf8",
+            "version": bundled_core_version(toolchain),
+            "license": "Apache-2.0",
+            "api": "decode(BytesView, ignore_bom=false), including UTF-16 allocation",
           },
         ]
       } else {

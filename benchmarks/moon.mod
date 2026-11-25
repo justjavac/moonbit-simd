@@ -8,7 +8,7 @@ repository = "https://github.com/justjavac/moonbit-simd"
 
 license = "MIT"
 
-description = "Development-only cross-library CRC32 and WHATWG URL benchmarks"
+description = "Development-only cross-library CRC32, WHATWG URL, and UTF-8 benchmarks"
 
 preferred_target = "native"
 
@@ -24,4 +24,6 @@ import {
   "tonyfettes/url@0.3.5",
   "moonbitstack/moonurl@0.3.1",
   "connect0459/urllib@0.6.0",
+  "justjavac/utf8@0.1.0",
+  "tonyfettes/utf8@0.2.4",
 }

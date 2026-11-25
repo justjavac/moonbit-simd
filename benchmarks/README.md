@@ -1,7 +1,7 @@
 # Development benchmarks
 
-This MIT-licensed module contains development-only CRC-32/ISO-HDLC and WHATWG URL
-comparison adapters. Its nested workspace links the local `justjavac/crc32` and `justjavac/url` modules while
+This MIT-licensed module contains development-only CRC-32/ISO-HDLC, WHATWG URL,
+and UTF-8 comparison adapters. Its nested workspace links the local libraries while
 keeping third-party dependencies out of the published library.
 
 Run `moon update` after installing MoonBit, then
@@ -22,3 +22,24 @@ The suite compares identical bytes using each library's public API. Owned-byte
 inputs and streaming chunks are prepared outside the timer; view-to-owned
 conversion is included only in the separately labelled view workload. Digest
 creation, byte-wise API loops, updates, and finalization are timed.
+
+The [UTF-8 adapters](utf8) compare `justjavac/utf8` basic scalar/SIMD and compat
+validation against `tonyfettes/utf8@0.2.4` and the bundled core UTF-8 decoder.
+Separate tests verify strict acceptance and identical UTF-16 decoded output.
+Validation and decoding have separate measurements: tonyfettes' validating
+constructor may materialize partial views, and core's acceptance baseline
+necessarily allocates decoded strings. Those costs remain inside the timer.
+
+The pinned tonyfettes package uses legacy JSON manifests and removed syntax, so
+the benchmark workspace links a reproducible development-only
+[compatibility copy](vendor/tonyfettes-utf8/UPSTREAM.md). Its algorithms, original
+source hash, and Apache-2.0 license are preserved. The published UTF-8 library
+has no third-party dependencies.
+
+There are 158 UTF-8 cases per backend, covering short/large ASCII and multilingual
+texts, early/late errors, incomplete input, offset-one views, and prepared owned
+stream chunks. Run `moon -C benchmarks test utf8 --target all`, then
+`moon run scripts/benchmark.mbtx utf8`. The collector checks every case name,
+length, API variant, and offset; the report validator independently checks that
+inventory and rejects incomplete or mixed CI runs. Explicit local reports use
+`moon run scripts/benchmark_report.mbtx --local utf8 _build/benchmarks/utf8/windows.json _build/utf8-report`.

@@ -18,6 +18,7 @@ library modules.
 | --- | --- | --- | --- |
 | `justjavac/crc32` | IEEE CRC-32, streaming, and checksum combination | [Guide](crc32/README.md) · [Examples](crc32/README.mbt.md) | [BENCHMARK.md](crc32/BENCHMARK.md) |
 | `justjavac/url` | WHATWG URL parsing, normalization, resolution, and form queries, ported from Ada | [Guide](url/README.md) · [Examples](url/README.mbt.md) | [BENCHMARK.md](url/BENCHMARK.md) |
+| `justjavac/utf8` | Strict UTF-8 validation, precise errors, and streaming, ported from simdutf8 | [Guide](utf8/README.md) · [Examples](utf8/README.mbt.md) | [BENCHMARK.md](utf8/BENCHMARK.md) |
 
 Follow each guide for installation, API usage, and release availability. New
 libraries are added as sibling modules at the repository root.
@@ -46,7 +47,7 @@ moon info
 moon fmt
 ```
 
-Scope commands with `moon -C xxx ...`; generate a module's API docs with
+Scope checks with `moon check xxx` and tests with `moon test xxx`; generate a module's API docs with
 `moon -C xxx doc`. See [AGENTS.md](AGENTS.md) for layout, documentation, testing,
 and maintenance conventions. All project content is written in English.
 
@@ -57,26 +58,30 @@ Coverage uploads use Codecov's GitHub OIDC integration.
 ```text
 moon test --target all
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url
+moon run scripts/coverage_report.mbtx local crc32 url utf8
 ```
 
 ## Benchmarks
 
 [Benchmarks CI](.github/workflows/benchmark.yml) measures all three systems and
-four backends. Each module's `BENCHMARK.md` highlights key comparisons; its
-`BENCHMARK-DATA.json` preserves the complete statistics and CI provenance.
+four backends. Each module's `BENCHMARK.md` documents key comparisons. Selected
+complete CI snapshots preserve statistics and provenance in `BENCHMARK-DATA.json`.
 
 The development-only [comparison harness](benchmarks/README.md) tests CRC32
 against `gaato/crc`, `gmlewis/crc32`, `kujirahand/crc32`, and
 `moonbitstack/mooncrypt/sum/crc32`, with pinned dependencies isolated from the
 published library. Its separate URL adapter packages compare `tonyfettes/url`,
 `moonbitstack/moonurl` in WHATWG mode, and `connect0459/urllib` against
-`justjavac/url`. Reproduce locally from the repository root:
+`justjavac/url`. UTF-8 comparisons measure strict validation and UTF-16 decoding
+against a pinned compatibility copy of `tonyfettes/utf8@0.2.4` and the bundled
+core decoder, with required adaptation costs documented in the module report.
+Reproduce locally from the repository root:
 
 ```text
 moon -C benchmarks test --target all
 moon run scripts/benchmark.mbtx crc32
 moon run scripts/benchmark.mbtx url
+moon run scripts/benchmark.mbtx utf8
 ```
 
 Commit reports generated from a complete CI run. Raw logs remain available as

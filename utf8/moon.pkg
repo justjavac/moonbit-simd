@@ -1,0 +1,16 @@
+import {
+  "moonbitlang/core/encoding/utf8" @encoding,
+  "moonbitlang/core/simd",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8" @encoding,
+} for "test"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+// The experimental SIMD import is unused on scalar-only backends.
+
+warnings = "-alert_experimental-unused_package"

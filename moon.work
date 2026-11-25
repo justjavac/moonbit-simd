@@ -1,4 +1,5 @@
 members = [
   "./crc32",
   "./url",
+  "./utf8",
 ]

@@ -103,6 +103,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
   if package_dir == "url" {
     validate_url_inventory(summaries)
   }
+  if package_dir == "utf8" {
+    validate_utf8_inventory(summaries)
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
@@ -127,6 +130,9 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       number(summary, "runs") == 10 &&
       number(summary, "batch_size") >= 1 else {
       fail("Invalid sample metadata: \{name}")
+    }
+    if package_dir == "utf8" {
+      validate_utf8_statistics(summary)
     }
   }
 }
@@ -396,6 +402,9 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
   if package_dir == "url" {
     return url_report(records)
   }
+  if package_dir == "utf8" {
+    return utf8_report(records)
+  }
   let first = records[0]
   let revision = text(first, "source_commit")
   let repository = text(first, "repository")
@@ -600,8 +609,387 @@ fn url_report(records : Array[Json]) -> String raise {
 }
 
 ///|
+/// Validates every UTF-8 distribution statistic and integral sample batch size.
+fn validate_utf8_statistics(summary : Json) -> Unit raise {
+  let quartiles = array(summary, "quartiles")
+  guard quartiles is [Number(low, ..), Number(middle, ..), Number(high, ..)] else {
+    fail("UTF-8 quartiles require three numeric values")
+  }
+  let minimum = number(summary, "min")
+  let maximum = number(summary, "max")
+  let tolerance = maximum.abs() * 0.000000000001 + 0.000000000001
+  guard low.is_finite() &&
+    middle.is_finite() &&
+    high.is_finite() &&
+    minimum <= low + tolerance &&
+    low <= middle + tolerance &&
+    middle <= high + tolerance &&
+    high <= maximum + tolerance &&
+    (middle - number(summary, "median")).abs() <= tolerance else {
+    fail("Invalid UTF-8 quartile range")
+  }
+  for
+    statistic in [
+      "sum", "variance", "median_abs_dev", "median_abs_dev_pct", "iqr",
+    ] {
+    guard number(summary, statistic) >= 0 else {
+      fail("Invalid UTF-8 statistic: \{statistic}")
+    }
+  }
+  let batch = number(summary, "batch_size")
+  guard batch >= 1 && batch.floor() == batch else {
+    fail("UTF-8 batch size must be integral")
+  }
+  guard (number(summary, "iqr") - (high - low)).abs() <= tolerance &&
+    (number(summary, "sum") - number(summary, "mean") * number(summary, "runs")).abs() <=
+    tolerance * 10 else {
+    fail("Inconsistent UTF-8 distribution statistics")
+  }
+}
+
+///|
+/// Defines every UTF-8 workload, byte count, API mode, view offset, and stream size.
+fn expected_utf8_names() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (label, length) in [
+      ("empty", 0),
+      ("ascii-15", 15),
+      ("ascii-64", 64),
+      ("ascii-4k", 4096),
+      ("ascii-1m", 1048576),
+      ("latin-4k", 4096),
+      ("cjk-4k", 4095),
+      ("emoji-4k", 4096),
+      ("mixed-4k", 4096),
+      ("cjk-1m", 1048575),
+      ("emoji-1m", 1048576),
+    ] {
+    let offsets = if ["ascii-4k", "cjk-4k", "emoji-4k"].contains(label) {
+      [0, 1]
+    } else {
+      [0]
+    }
+    for prefix in ["validate-", "decode-"] {
+      let implementations = if prefix == "validate-" {
+        [
+          "own-basic-scalar", "own-basic-simd", "own-compat", "tonyfettes", "core",
+        ]
+      } else {
+        ["own-scalar", "own-simd", "tonyfettes", "core"]
+      }
+      for implementation in implementations {
+        for offset in offsets {
+          expected["\{prefix}\{label}:\{implementation}:\{length}:\{offset}"] = ()
+        }
+      }
+    }
+  }
+  for
+    label in [
+      "invalid-start", "invalid-end", "invalid-overlong", "invalid-truncated",
+    ] {
+    for
+      implementation in [
+        "own-basic-scalar", "own-basic-simd", "own-compat", "tonyfettes", "core",
+      ] {
+      expected["\{label}:\{implementation}:65536:0"] = ()
+    }
+  }
+  for label in ["ascii", "mixed"] {
+    for implementation in ["own-scalar", "own-simd"] {
+      for chunk in [1, 64, 4096] {
+        expected["stream-\{label}:\{implementation}:65536:\{chunk}"] = ()
+      }
+    }
+  }
+  expected
+}
+
+///|
+/// Rejects missing, duplicate, or substituted UTF-8 cases using complete names.
+fn validate_utf8_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected = expected_utf8_names()
+  guard summaries.length() == expected.length() else {
+    fail("Expected 158 UTF-8 cases")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.contains(name) else {
+      fail("Unexpected UTF-8 benchmark: \{name}")
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Incomplete UTF-8 inventory") }
+}
+
+///|
+/// Validates an explicitly local UTF-8 record without authorizing it as a CI snapshot.
+fn validate_local_utf8(record : Json) -> Unit raise {
+  guard text(record, "module") == "justjavac/utf8" &&
+    text(record, "source") == "local" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" &&
+    text(record, "run_attempt") == "" else {
+    fail("The local renderer requires a local UTF-8 collector artifact")
+  }
+  guard ["linux", "macos", "windows"].contains(text(record, "os")) &&
+    text(field(record, "cpu"), "model") != "" else {
+    fail("Missing local runner identity")
+  }
+  let backends = array(record, "backends")
+  guard backends.length() == 4 else {
+    fail("Local reports require all four backends")
+  }
+  let names : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !names.contains(name) else { fail("Duplicate local backend") }
+    names[name] = ()
+    validate_backend(backend, "utf8")
+  }
+}
+
+///|
+/// Renders a UTF-8 comparison with the correct public API variants and adaptation labels.
+fn utf8_table(
+  builder : StringBuilder,
+  records : Array[Json],
+  title : String,
+  workload : String,
+  bytes : String,
+  parameter : String,
+  units : String,
+) -> Unit raise {
+  let decoding = workload.find("decode-") is Some(0)
+  let streaming = workload.find("stream-") is Some(0)
+  results_table(
+    builder,
+    records,
+    title,
+    workload,
+    bytes,
+    parameter,
+    units,
+    @string.parse_int(bytes).to_double(),
+    implementations=if streaming {
+      ["own-scalar", "own-simd"]
+    } else if decoding {
+      ["own-scalar", "own-simd", "tonyfettes", "core"]
+    } else {
+      ["own-basic-scalar", "own-basic-simd", "own-compat", "tonyfettes", "core"]
+    },
+    labels=if streaming {
+      ["ours scalar", "ours SIMD request"]
+    } else if decoding {
+      ["ours scalar", "ours SIMD request", "tonyfettes decode", "core decode"]
+    } else {
+      [
+        "ours basic scalar", "ours basic SIMD request", "ours compat", "tonyfettes wrapper",
+        "core decode",
+      ]
+    },
+  )
+}
+
+///|
+/// Builds a UTF-8 report while visibly distinguishing local data from a complete CI run.
+fn utf8_report(records : Array[Json], is_local~ : Bool = false) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# UTF-8 performance comparison\n\n")
+  if is_local {
+    builder.write_string(
+      "**Local \{text(first, "os")} measurement; not a published CI snapshot.** Source HEAD `\{text(first, "source_commit")}`; working tree dirty: \{display(field(first, "working_tree_dirty"))}.\n\n",
+    )
+  } else {
+    let revision = text(first, "source_commit")
+    builder.write_string(
+      "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{text(first, "repository")}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
+    )
+  }
+  let data_file = if is_local {
+    "LOCAL-BENCHMARK-DATA.json"
+  } else {
+    "BENCHMARK-DATA.json"
+  }
+  builder.write_string(
+    "**Scope:** \{records.length()} OS x 4 backends x 158 cases = **\{records.length() * 632} measurements**. [\{data_file}](\{data_file}) preserves every case and unrounded statistic, sample metadata, commands, timestamps, manifests, dependencies, CPU, and toolchain.\n\n",
+  )
+  builder.write_string(
+    "## APIs and adaptation\n\n| Label | Public API measured |\n| --- | --- |\n| ours basic scalar / SIMD request | is_valid(BytesView, simd=false/true); no UTF-16 decoding |\n| ours compat | validate(BytesView, simd=true), including exact error recovery |\n| tonyfettes wrapper | Utf8.of_bytesview; wrapper allocation and partial-view materialization |\n| core decode acceptance | Strict decode(ignore_bom=false), including UTF-16 allocation |\n| ours scalar / SIMD decoding | from_utf8, including validation and UTF-16 decoding |\n| tonyfettes / core decoding | Strict decode with identical final UTF-16 output |\n\n",
+  )
+  builder.write_string(
+    "| Dependency | Pinned version | License |\n| --- | --- | --- |\n",
+  )
+  for dependency in array(first, "comparison_dependencies") {
+    builder.write_string(
+      "| \{cell(text(dependency, "package"))} | \{cell(text(dependency, "version"))} | \{cell(text(dependency, "license"))} |\n",
+    )
+  }
+  builder.write_string(
+    "\nThe tonyfettes 0.2.4 copy has manifest/syntax compatibility edits for this toolchain; its original source hash and exact changes are recorded in benchmarks/vendor/tonyfettes-utf8/UPSTREAM.md and JSON metadata. Range checks and decoding formulas are preserved. Core lacks a standalone validation API, so its acceptance baseline necessarily includes decoding. Read the separate decoding tables for equivalent returned-string operations.\n\n",
+  )
+  builder.write_string(
+    "## Method\n\n- All adapters pass the same acceptance and decoded-text corpus before timing. Inputs cover ASCII, Latin, CJK, emoji, mixed text, invalid first/last bytes, a middle overlong sequence, and a truncated suffix. Selected 4 KiB inputs have offset-one views with rejected sentinels outside the view.\n- Input construction and owned stream chunks are prepared outside timing. Public API calls, conversions, error adaptation, state creation/finalization, generic callbacks, and bench.keep barriers are timed. All implementations run in the same binary and on the same runner.\n- SIMD requests use native V128 range masks with sign-flipped comparisons and UInt64 predecessor assembly, or the pinned lookup3 algorithm on linear-memory Wasm. Inputs below 64 bytes and Wasm GC/JS use scalar fallback. Native avoids byte permutation and unsigned-compare emulation on the validated x86 toolchain. The basic vector path aggregates errors; compat and scalar paths can stop early. Invalid-input cases report latency, not whole-buffer throughput.\n- Release mode and sequential backends, with --no-parallelize. The core runner records 10 batch samples and 5% winsorization after calibration around 100 ms; fast cases use 100000 iterations per batch. **Bold** marks the best measured mean; `*` marks CV >= 5% and possible noise. Compare within an OS/backend; a best mean is not evidence of significance.\n\n",
+  )
+  builder.write_string(
+    "## Runner context\n\n| OS | CPU | Architecture / logical CPUs | Node.js |\n| --- | --- | --- | --- |\n",
+  )
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "| \{text(record, "os")} | \{cell(text(cpu, "model"))} | \{cell(text(cpu, "architecture"))} / \{display(field(cpu, "logical_cpus"))} | \{cell(text(record, "node"))} |\n",
+    )
+  }
+  builder.write_string("\n")
+  utf8_table(
+    builder, records, "1 MiB ASCII validation: throughput (GiB/s)", "validate-ascii-1m",
+    "1048576", "0", "GiB/s",
+  )
+  utf8_table(
+    builder, records, "1 MiB CJK validation: throughput (GiB/s)", "validate-cjk-1m",
+    "1048575", "0", "GiB/s",
+  )
+  utf8_table(
+    builder, records, "1 MiB emoji validation: throughput (GiB/s)", "validate-emoji-1m",
+    "1048576", "0", "GiB/s",
+  )
+  utf8_table(
+    builder, records, "64-byte ASCII validation: latency (ns)", "validate-ascii-64",
+    "64", "0", "ns",
+  )
+  utf8_table(
+    builder, records, "4 KiB offset-one CJK validation: latency (us)", "validate-cjk-4k",
+    "4095", "1", "us",
+  )
+  utf8_table(
+    builder, records, "Invalid first byte in 64 KiB: latency (ns)", "invalid-start",
+    "65536", "0", "ns",
+  )
+  utf8_table(
+    builder, records, "Invalid last byte in 64 KiB: latency (us)", "invalid-end",
+    "65536", "0", "us",
+  )
+  utf8_table(
+    builder, records, "Truncated 64 KiB UTF-8 suffix: latency (us)", "invalid-truncated",
+    "65536", "0", "us",
+  )
+  utf8_table(
+    builder, records, "4 KiB mixed text: validation and decoding (us)", "decode-mixed-4k",
+    "4096", "0", "us",
+  )
+  utf8_table(
+    builder, records, "1 MiB CJK: validation and decoding (us)", "decode-cjk-1m",
+    "1048575", "0", "us",
+  )
+  utf8_table(
+    builder, records, "4 KiB offset-one CJK: validation and decoding (us)", "decode-cjk-4k",
+    "4095", "1", "us",
+  )
+  utf8_table(
+    builder, records, "64 KiB mixed stream, 4 KiB chunks: latency (us)", "stream-mixed",
+    "65536", "4096", "us",
+  )
+  builder.write_string(
+    "<details>\n<summary>Toolchain and reproduction</summary>\n\n",
+  )
+  for record in records {
+    builder.write_string(
+      "**\{text(record, "os")}:**\n\n~~~text\n\{text(record, "toolchain")}\n~~~\n\n",
+    )
+    for backend in array(record, "backends") {
+      builder.write_string(
+        "**\{text(backend, "backend")}:** \{text(backend, "started_at_utc")} to \{text(backend, "finished_at_utc")}\n\n~~~text\n\{text(backend, "command")}\n~~~\n\n",
+      )
+    }
+  }
+  builder.write_string(
+    "Run `moon -C benchmarks test utf8 --target all`, then `moon run scripts/benchmark.mbtx utf8`. A complete CI snapshot requires all three systems and all four backends with identical source/run/attempt/dependencies. Local rendering uses `moon run scripts/benchmark_report.mbtx --local utf8 _build/benchmarks/utf8/windows.json _build/utf8-report` and writes explicitly LOCAL-named artifacts. Raw CI logs are retained for 90 days.\n\n</details>\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Checks exact UTF-8 inventories and malformed distribution metadata.
+fn utf8_self_test() -> Unit raise {
+  assert_eq(expected_utf8_names().length(), 158)
+  let statistics : Json = {
+    "min": 0.5,
+    "max": 1.5,
+    "mean": 1,
+    "median": 1,
+    "sum": 10,
+    "variance": 0.01,
+    "median_abs_dev": 0.1,
+    "median_abs_dev_pct": 10,
+    "quartiles": [0.75, 1, 1.25],
+    "iqr": 0.5,
+    "batch_size": 100,
+    "runs": 10,
+  }
+  validate_utf8_statistics(statistics)
+  let changes : Array[(String, Json)] = [
+    ("batch_size", 1.5),
+    ("quartiles", [0.75, 1]),
+    ("quartiles", [1.25, 1, 0.75]),
+    ("quartiles", [0.75, 1, "invalid"]),
+    ("variance", -0.01),
+    ("sum", "invalid"),
+    ("sum", 11),
+    ("iqr", 0.75),
+  ]
+  for (key, value) in changes {
+    let malformed = match statistics {
+      Object(fields) => {
+        let changed = fields.copy()
+        changed[key] = value
+        Json(changed)
+      }
+      _ => fail("Expected a test statistic object")
+    }
+    try validate_utf8_statistics(malformed) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Malformed UTF-8 sample metadata must fail")
+    }
+  }
+  let cases : Array[Json] = []
+  for (name, _) in expected_utf8_names() {
+    cases.push({ "name": name })
+  }
+  validate_utf8_inventory(cases)
+  for
+    changed in [
+      "validate-cjk-4k:own-basic-simd:4096:0", "validate-ascii-4k:own-basic-simd:4096:2",
+      "decode-ascii-4k:own-compat:4096:0", "stream-mixed:own-simd:65536:65",
+    ] {
+    let substituted = cases.copy()
+    substituted[0] = { "name": changed }
+    try validate_utf8_inventory(substituted) catch {
+      _ => ()
+    } noraise {
+      _ => fail("Substituted UTF-8 cases must fail")
+    }
+  }
+  let duplicate = cases.copy()
+  duplicate[0] = duplicate[1]
+  try validate_utf8_inventory(duplicate) catch {
+    _ => ()
+  } noraise {
+    _ => fail("Duplicate UTF-8 cases must fail")
+  }
+  try validate_utf8_inventory([]) catch {
+    _ => ()
+  } noraise {
+    _ => fail("An incomplete UTF-8 inventory must fail")
+  }
+}
+
+///|
 /// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
 fn self_test() -> Unit raise {
+  utf8_self_test()
   let valid : Json = {
     "name": "combine:gf2:18446744073709551615:0",
     "mean": 1.0,
@@ -655,6 +1043,25 @@ async fn main {
   if arguments.length() == 2 && arguments[1] == "--self-test" {
     self_test()
     println("Benchmark report self-test passed")
+    return
+  }
+  if arguments.length() == 5 && arguments[1] == "--local" {
+    guard arguments[2] == "utf8" else {
+      fail("Local rendering supports UTF-8 artifacts")
+    }
+    let record = @json.parse(@fs.read_text(arguments[3]))
+    validate_local_utf8(record)
+    let directory = arguments[4]
+    @fs.mkdir(directory, recursive=true, allow_existing=true)
+    @fs.write_text(
+      "\{directory}/LOCAL-BENCHMARK.md",
+      utf8_report([record], is_local=true),
+    )
+    @fs.write_text(
+      "\{directory}/LOCAL-BENCHMARK-DATA.json",
+      Json([record]).stringify(indent=2),
+    )
+    println("Generated explicitly local UTF-8 report in " + directory)
     return
   }
   guard arguments.length() == 3 else {
