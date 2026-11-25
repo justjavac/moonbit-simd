@@ -406,6 +406,74 @@ fn index(backend : Json) -> Map[String, Json] raise {
 }
 
 ///|
+/// Computes speedup from unrounded latencies and marks noise in either measurement.
+fn speedup(reference : Json, candidate : Json) -> String raise {
+  let ratio = number(reference, "mean") / number(candidate, "mean")
+  decimal(ratio) +
+  "x" +
+  (if number(reference, "std_dev_pct") >= 5 ||
+    number(candidate, "std_dev_pct") >= 5 {
+    "*"
+  } else {
+    ""
+  })
+}
+
+///|
+/// Selects the smaller mean without losing the selected sample's variability.
+fn faster(current : Json?, candidate : Json) -> Json raise {
+  match current {
+    Some(summary) =>
+      if number(summary, "mean") <= number(candidate, "mean") {
+        summary
+      } else {
+        candidate
+      }
+    None => candidate
+  }
+}
+
+///|
+/// Compares only the variants shown for this exact workload, byte count, and offset.
+fn comparisons(
+  cases : Map[String, Json],
+  workload : String,
+  bytes : Int32,
+  offset : Int32,
+  variants : Array[(String, String)],
+) -> (String, String) raise {
+  let mut scalar : Json? = None
+  let mut simd : Json? = None
+  let mut own : Json? = None
+  let mut reference : Json? = None
+  for (variant, _) in variants {
+    if cases.get("\{workload}:\{variant}:\{bytes}:\{offset}") is Some(summary) {
+      if variant == "own-scalar" {
+        scalar = Some(summary)
+      }
+      if variant == "own-simd" {
+        simd = Some(summary)
+      }
+      if variant.has_prefix("own-") {
+        own = Some(faster(own, summary))
+      } else {
+        reference = Some(faster(reference, summary))
+      }
+    }
+  }
+  (
+    match (scalar, simd) {
+      (Some(scalar), Some(simd)) => speedup(scalar, simd)
+      _ => "n/a"
+    },
+    match (reference, own) {
+      (Some(reference), Some(own)) => speedup(reference, own)
+      _ => "n/a"
+    },
+  )
+}
+
+///|
 /// Renders representative means in nanoseconds with possible-noise markers.
 fn write_table(
   builder : StringBuilder,
@@ -417,11 +485,13 @@ fn write_table(
   for (_, label) in variants {
     builder.write_string(" " + label + " ns |")
   }
-  builder.write_string("\n| --- | ---: | ---: |")
+  builder.write_string(
+    " SIMD speedup | Best ours vs ref |\n| --- | ---: | ---: |",
+  )
   for _ in variants {
     builder.write_string(" ---: |")
   }
-  builder.write_string("\n")
+  builder.write_string(" ---: | ---: |\n")
   for (workload, bytes, offset) in rows {
     let mut best = 0.0
     for (variant, _) in variants {
@@ -449,7 +519,10 @@ fn write_table(
         }
       }
     }
-    builder.write_string("\n")
+    let (simd, reference) = comparisons(
+      cases, workload, bytes, offset, variants,
+    )
+    builder.write_string(" " + simd + " | " + reference + " |\n")
   }
   builder.write_string("\n")
 }
@@ -499,6 +572,9 @@ fn report(records : Array[Json], is_local~ : Bool) -> String raise {
   )
   builder.write_string(
     "Times below are **nanoseconds per call**. `*` marks CV >= 5% as possible noise. Bold indicates only the smallest mean, with no significance claim. Searches can stop early and receive no input-throughput estimate. Full byte counts report GiB/s using `bytes * 1e6 / mean_us / 2^30`. The recorded core runner calibrates near 100 ms, takes ten batch samples, and uses 5% winsorization; submicrosecond cases use 100000 calls per batch.\n\n",
+  )
+  builder.write_string(
+    "**Speedups:** `SIMD speedup` = scalar mean / SIMD-request mean; `Best ours vs ref` = fastest shown reference mean / fastest shown own mean, including Two-Way where shown. Above 1 is faster, below 1 is slower; `*` flags CV >= 5% in either measurement. Ratios use unrounded means within one OS/backend; missing comparisons are `n/a`. The best measured path can differ from automatic dispatch.\n\n",
   )
   builder.write_string(
     "| OS | CPU | Architecture | Runner image |\n| --- | --- | --- | --- |\n",
@@ -582,7 +658,7 @@ fn report(records : Array[Json], is_local~ : Bool) -> String raise {
         ],
       )
       builder.write_string(
-        "| Complete count | Scalar GiB/s | SIMD GiB/s | Reference GiB/s |\n| --- | ---: | ---: | ---: |\n",
+        "| Complete count | Scalar GiB/s | SIMD GiB/s | Reference GiB/s | SIMD speedup | Best ours vs ref |\n| --- | ---: | ---: | ---: | ---: | ---: |\n",
       )
       for workload in ["count1-dense", "count3-dense"] {
         builder.write_string("| " + workload + " |")
@@ -595,7 +671,12 @@ fn report(records : Array[Json], is_local~ : Bool) -> String raise {
             " |",
           )
         }
-        builder.write_string("\n")
+        let (simd, reference) = comparisons(cases, workload, 65536, 0, [
+          ("own-scalar", "Scalar"),
+          ("own-simd", "SIMD"),
+          ("reference", "Reference"),
+        ])
+        builder.write_string(" " + simd + " | " + reference + " |\n")
       }
       builder.write_string("\n</details>\n\n")
     }
@@ -717,6 +798,48 @@ fn self_test() -> Unit raise {
   assert_true(rendered.find("4440") is Some(_))
   assert_true(rendered.find("1000") is Some(_))
   assert_eq(cell("a|b\nc<d>"), "a\\|b c&lt;d&gt;")
+  let slow : Json = { "mean": 2, "std_dev_pct": 4.9 }
+  let fast : Json = { "mean": 1, "std_dev_pct": 0 }
+  let noisy : Json = { "mean": 1, "std_dev_pct": 5 }
+  assert_eq(speedup(slow, fast), "2x")
+  assert_eq(speedup(fast, slow), "0.5x")
+  assert_eq(speedup(slow, noisy), "2x*")
+  assert_eq(speedup(noisy, slow), "0.5x*")
+  assert_eq(
+    speedup({ "mean": 1.0004, "std_dev_pct": 0 }, {
+      "mean": 0.50049,
+      "std_dev_pct": 0,
+    }),
+    "1.999x",
+  )
+  let cases : Map[String, Json] = Map([
+    ("case:own-scalar:64:0", { "mean": 4, "std_dev_pct": 0 }),
+    ("case:own-simd:64:0", { "mean": 2, "std_dev_pct": 0 }),
+    ("case:own-twoway:64:0", { "mean": 1, "std_dev_pct": 0 }),
+    ("case:core:64:0", { "mean": 3, "std_dev_pct": 5 }),
+    ("case:reference:64:0", { "mean": 10, "std_dev_pct": 0 }),
+    ("unrelated:core:64:0", { "mean": 0.1, "std_dev_pct": 0 }),
+    ("case:core:64:1", { "mean": 0.1, "std_dev_pct": 0 }),
+  ])
+  let variants = [
+    ("own-scalar", "Scalar"),
+    ("own-simd", "SIMD"),
+    ("own-twoway", "Two-Way"),
+    ("core", "Core"),
+  ]
+  assert_eq(comparisons(cases, "case", 64, 0, variants), ("2x", "3x*"))
+  assert_eq(comparisons(cases, "case", 64, 1, variants), ("n/a", "n/a"))
+  assert_eq(
+    comparisons(cases, "case", 64, 0, [
+      ("own-scalar", "Scalar"),
+      ("reference", "Reference"),
+    ]),
+    ("n/a", "2.5x"),
+  )
+  let compared = StringBuilder()
+  write_table(compared, cases, [("case", 64, 0), ("case", 64, 1)], variants)
+  assert_true(compared.to_string().find("| 2x | 3x* |") is Some(_))
+  assert_true(compared.to_string().find("| n/a | n/a |") is Some(_))
   let crlf = snapshots.copy()
   crlf[1] = replace_field(
     crlf[1],

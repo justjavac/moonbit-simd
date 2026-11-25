@@ -866,6 +866,49 @@ fn metric(summary : Json, units : String, bytes : Double) -> String raise {
 }
 
 ///|
+/// Computes a latency-based speedup from unrounded means and flags noise in either sample.
+fn speedup(reference : Json, candidate : Json) -> String raise {
+  let ratio = number(reference, "mean") / number(candidate, "mean")
+  let variability = if number(reference, "std_dev_pct") >= 5 ||
+    number(candidate, "std_dev_pct") >= 5 {
+    "*"
+  } else {
+    ""
+  }
+  decimal(ratio) + "x" + variability
+}
+
+///|
+/// Identifies this collection's variants without treating compatibility paths as references.
+fn own_implementation(implementation : String) -> Bool {
+  implementation.has_prefix("own-") ||
+  implementation == "justjavac" ||
+  implementation.has_prefix("justjavac-")
+}
+
+///|
+/// Retains the smaller measured mean within one workload and runner/backend.
+fn faster(current : Json?, candidate : Json) -> Json raise {
+  match current {
+    Some(summary) =>
+      if number(summary, "mean") <= number(candidate, "mean") {
+        summary
+      } else {
+        candidate
+      }
+    None => candidate
+  }
+}
+
+///|
+/// Explains the comparison columns once per module report.
+fn comparison_legend(builder : StringBuilder) -> Unit {
+  builder.write_string(
+    "**Speedups:** `SIMD speedup` = scalar mean / SIMD-request mean; `Best ours vs ref` = fastest reference mean / fastest shown `ours` mean. Ratios use unrounded latencies within each OS/backend: above 1 is faster, below 1 is slower. `*` marks CV >= 5% in either measurement. The best measured path can differ from automatic dispatch; a SIMD request can use scalar fallback.\n\n",
+  )
+}
+
+///|
 /// Renders one key comparison for all twelve runner/backend environments.
 fn results_table(
   builder : StringBuilder,
@@ -883,12 +926,35 @@ fn results_table(
     "ours scalar", "ours SIMD request", "gaato", "gmlewis", "kujirahand", "mooncrypt",
   ],
 ) -> Unit raise {
+  let scalar_position = implementations.search_by(implementation => {
+    match implementation {
+      "own-scalar" | "own-basic-scalar" | "justjavac-scalar" => true
+      _ => false
+    }
+  })
+  let simd_position = implementations.search_by(implementation => {
+    match implementation {
+      "own-simd" | "own-basic-simd" | "justjavac-simd" => true
+      _ => false
+    }
+  })
+  let compare_reference = implementations.search_by(implementation => {
+      !own_implementation(implementation)
+    })
+    is Some(_)
+  let headings = labels.copy()
+  if scalar_position is Some(_) && simd_position is Some(_) {
+    headings.push("SIMD speedup")
+  }
+  if compare_reference {
+    headings.push("Best ours vs ref")
+  }
   builder.write_string("## \{title}\n\n")
   builder.write_string(
     "| OS / backend | " +
-    labels.join(" | ") +
+    headings.join(" | ") +
     " |\n| --- | " +
-    labels.map(_ => "---").join(" | ") +
+    headings.map(_ => "---:").join(" | ") +
     " |\n",
   )
   for record in records {
@@ -898,12 +964,19 @@ fn results_table(
         values["\{workload}:\{implementations[0]}:\{bytes}:\{parameter}"],
         "mean",
       )
+      let mut fastest_own : Json? = None
+      let mut fastest_reference : Json? = None
       for implementation in implementations {
         let name = "\{workload}:\{implementation}:\{bytes}:\{parameter}"
         let value = values
           .get(name)
           .unwrap_or_else(() => fail("Missing comparison: \{name}"))
         fastest = fastest.min(number(value, "mean"))
+        if own_implementation(implementation) {
+          fastest_own = Some(faster(fastest_own, value))
+        } else {
+          fastest_reference = Some(faster(fastest_reference, value))
+        }
       }
       builder.write_string(
         "| \{text(record, "os")} / \{text(backend, "backend")} ",
@@ -920,6 +993,23 @@ fn results_table(
           measured
         }
         builder.write_string("| \{formatted} ")
+      }
+      match (scalar_position, simd_position) {
+        (Some(scalar), Some(simd)) => {
+          let scalar_name = "\{workload}:\{implementations[scalar]}:\{bytes}:\{parameter}"
+          let simd_name = "\{workload}:\{implementations[simd]}:\{bytes}:\{parameter}"
+          builder.write_string(
+            "| " + speedup(values[scalar_name], values[simd_name]) + " ",
+          )
+        }
+        _ => ()
+      }
+      if compare_reference {
+        let comparison = match (fastest_reference, fastest_own) {
+          (Some(reference), Some(own)) => speedup(reference, own)
+          _ => "n/a"
+        }
+        builder.write_string("| " + comparison + " ")
       }
       builder.write_string("|\n")
     }
@@ -992,6 +1082,7 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
   builder.write_string(
     "**Scope:** 3 operating systems x 4 backends x 207 cases = **2484 measurements**. Key comparisons are below; [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves every case, mean, median, range, standard deviation, quartile, sample count, command, timestamp, and environment.\n\n",
   )
+  comparison_legend(builder)
   highlights(builder, records)
   builder.write_string(
     "## Implementations\n\n| Label | Package / pinned version | Public API measured |\n| --- | --- | --- |\n| ours scalar | justjavac/crc32 / source above | hash and Hasher, simd=false |\n| ours SIMD request | justjavac/crc32 / source above | hash and Hasher, simd=true |\n",
@@ -1109,6 +1200,7 @@ fn url_report(records : Array[Json]) -> String raise {
   builder.write_string(
     "**Scope:** 3 operating systems x 4 backends x 144 cases = **1728 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves all workloads, input lengths, UTF-16 view offsets, means, medians, ranges, variability, throughput inputs, sample counts, compiler versions, commands, timestamps, and dependency manifests.\n\n",
   )
+  comparison_legend(builder)
   builder.write_string(
     "## Implementations\n\n| Label | Package / pinned version | API |\n| --- | --- | --- |\n| ours scalar / SIMD request | justjavac/url / source above | parse(StringView, simd=false/true), href |\n",
   )
@@ -1237,6 +1329,7 @@ fn base64_report(records : Array[Json]) -> String raise {
   builder.write_string(
     "Complete snapshot: **3 operating systems x 4 backends x 200 cases = 2400 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) preserves every unrounded statistic, exact input/output length, and runner/toolchain record.\n\n",
   )
+  comparison_legend(builder)
   base64_highlights(builder, records)
   builder.write_string(
     "## Implementations\n\n| Label | Package / version | Public API measured |\n| --- | --- | --- |\n| ours scalar / SIMD request | justjavac/base64 / source above | encode_to_string, decode_string; explicit simd=false/true |\n",
@@ -1580,7 +1673,11 @@ fn uuid_report(records : Array[Json]) -> String raise {
     "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}) | [source \{revision[:7]}](https://github.com/\{repository}/commit/\{revision}) | attempt \{text(first, "run_attempt")}\n\n",
   )
   builder.write_string(
-    "**Scope:** 3 operating systems x 4 backends x 193 cases = **2316 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) retains every unrounded statistic, UUID count, byte/code-unit length, view/output offset, command, timestamp, dependency, and runner detail.\n\n## At a glance\n\nNative hyphenated parsing, 36 ASCII code units per UUID:\n\n",
+    "**Scope:** 3 operating systems x 4 backends x 193 cases = **2316 measurements**. [BENCHMARK-DATA.json](BENCHMARK-DATA.json) retains every unrounded statistic, UUID count, byte/code-unit length, view/output offset, command, timestamp, dependency, and runner detail.\n\n",
+  )
+  comparison_legend(builder)
+  builder.write_string(
+    "## At a glance\n\nNative hyphenated parsing, 36 ASCII code units per UUID:\n\n",
   )
   for record in records {
     let backends = array(record, "backends")
@@ -2123,6 +2220,7 @@ fn utf8_report(records : Array[Json], is_local~ : Bool = false) -> String raise 
   builder.write_string(
     "**Scope:** \{records.length()} OS x 4 backends x 158 cases = **\{records.length() * 632} measurements**. [\{data_file}](\{data_file}) preserves every case and unrounded statistic, sample metadata, commands, timestamps, manifests, dependencies, CPU, and toolchain.\n\n",
   )
+  comparison_legend(builder)
   builder.write_string(
     "## APIs and adaptation\n\n| Label | Public API measured |\n| --- | --- |\n| ours basic scalar / SIMD request | is_valid(BytesView, simd=false/true); no UTF-16 decoding |\n| ours compat | validate(BytesView, simd=true), including exact error recovery |\n| tonyfettes wrapper | Utf8.of_bytesview; wrapper allocation and partial-view materialization |\n| core decode acceptance | Strict decode(ignore_bom=false), including UTF-16 allocation |\n| ours scalar / SIMD decoding | from_utf8, including validation and UTF-16 decoding |\n| tonyfettes / core decoding | Strict decode with identical final UTF-16 output |\n\n",
   )
@@ -2294,8 +2392,117 @@ fn utf8_self_test() -> Unit raise {
 }
 
 ///|
+/// Checks comparison direction, noise propagation, variant selection, and missing APIs.
+fn comparison_self_test() -> Unit raise {
+  let slow : Json = { "mean": 2.0, "std_dev_pct": 4.9 }
+  let fast : Json = { "mean": 1.0, "std_dev_pct": 0.0 }
+  let noisy : Json = { "mean": 1.0, "std_dev_pct": 5.0 }
+  assert_eq(speedup(slow, fast), "2x")
+  assert_eq(speedup(fast, slow), "0.5x")
+  assert_eq(speedup(slow, noisy), "2x*")
+  assert_eq(speedup(noisy, slow), "0.5x*")
+  assert_eq(
+    speedup({ "mean": 1.0004, "std_dev_pct": 0 }, {
+      "mean": 0.50049,
+      "std_dev_pct": 0,
+    }),
+    "1.999x",
+  )
+  let records : Array[Json] = [
+    {
+      "os": "fixture",
+      "backends": [
+        {
+          "backend": "native",
+          "summaries": [
+            {
+              "name": "case:own-basic-scalar:64:0",
+              "mean": 4,
+              "std_dev_pct": 0,
+            },
+            { "name": "case:own-basic-simd:64:0", "mean": 2, "std_dev_pct": 0 },
+            { "name": "case:own-compat:64:0", "mean": 1, "std_dev_pct": 0 },
+            { "name": "case:core:64:0", "mean": 3, "std_dev_pct": 5 },
+            { "name": "case:reference:64:0", "mean": 10, "std_dev_pct": 0 },
+            { "name": "unrelated:core:64:0", "mean": 0.1, "std_dev_pct": 0 },
+            { "name": "form:justjavac:16:0", "mean": 4, "std_dev_pct": 0 },
+            { "name": "form:core:16:0", "mean": 2, "std_dev_pct": 0 },
+          ],
+        },
+      ],
+    },
+  ]
+  for units in ["ns", "GiB/s"] {
+    let builder = StringBuilder()
+    results_table(
+      builder,
+      records,
+      "Fixture",
+      "case",
+      "64",
+      "0",
+      units,
+      64,
+      implementations=[
+        "own-basic-scalar", "own-basic-simd", "own-compat", "core", "reference",
+      ],
+      labels=[
+        "ours scalar", "ours SIMD request", "ours compat", "core", "reference",
+      ],
+    )
+    let rendered = builder.to_string()
+    assert_true(rendered.find("SIMD speedup | Best ours vs ref") is Some(_))
+    assert_true(rendered.find("| 2x | 3x* |") is Some(_))
+  }
+  let own_only = StringBuilder()
+  results_table(
+    own_only,
+    records,
+    "Own only",
+    "case",
+    "64",
+    "0",
+    "us",
+    64,
+    implementations=["own-basic-scalar", "own-basic-simd"],
+    labels=["ours scalar", "ours SIMD request"],
+  )
+  assert_true(own_only.to_string().find("Best ours vs ref") is None)
+  let form = StringBuilder()
+  results_table(
+    form,
+    records,
+    "Form",
+    "form",
+    "16",
+    "0",
+    "us",
+    16,
+    implementations=["justjavac", "core"],
+    labels=["ours", "core"],
+  )
+  assert_true(form.to_string().find("SIMD speedup") is None)
+  assert_true(form.to_string().find("| 0.5x |") is Some(_))
+  must_reject(() => {
+    results_table(
+      StringBuilder(),
+      records,
+      "Missing",
+      "case",
+      "64",
+      "0",
+      "us",
+      64,
+      implementations=["own-basic-scalar", "missing"],
+      labels=["ours", "missing"],
+    )
+  })
+}
+
+///|
 /// Tests report parsing, precise suffix labels, and rejection of fabricated provenance.
 fn self_test() -> Unit raise {
+  comparison_self_test()
   utf8_self_test()
   base64_self_test()
   uuid_self_test()
@@ -2719,6 +2926,7 @@ fn atoi_report(records : Array[Json], is_local~ : Bool = false) -> String raise 
     data_file +
     ") preserves every unrounded statistic, case, offset, command, timestamp, source/run/attempt, dependency version, CPU, runner image, and toolchain.\n\n",
   )
+  comparison_legend(builder)
   builder.write_string(
     "## Vector gains within this library\n\nRatios divide scalar latency by SIMD-request latency for the same public operation. Ratios above one favor the SIMD request.\n\n| OS / backend | UInt64, 16 digits | UInt128, maximum |\n| --- | --- | --- |\n",
   )
@@ -2727,20 +2935,24 @@ fn atoi_report(records : Array[Json], is_local~ : Bool = false) -> String raise 
       let name = text(backend, "backend")
       if name == "native" || name == "wasm" {
         let values = index(backend)
-        let word = number(values["parse-u64-sixteen:own-scalar:16:0"], "mean") /
-          number(values["parse-u64-sixteen:own-simd:16:0"], "mean")
-        let wide = number(values["parse-u128-max:own-scalar:39:0"], "mean") /
-          number(values["parse-u128-max:own-simd:39:0"], "mean")
+        let word = speedup(
+          values["parse-u64-sixteen:own-scalar:16:0"],
+          values["parse-u64-sixteen:own-simd:16:0"],
+        )
+        let wide = speedup(
+          values["parse-u128-max:own-scalar:39:0"],
+          values["parse-u128-max:own-simd:39:0"],
+        )
         builder.write_string(
           "| " +
           text(record, "os") +
           " / " +
           name +
           " | " +
-          decimal(word) +
-          "x | " +
-          decimal(wide) +
-          "x |\n",
+          word +
+          " | " +
+          wide +
+          " |\n",
         )
       }
     }
@@ -3326,6 +3538,7 @@ fn argminmax_report(
     }) +
     ".\n\n",
   )
+  comparison_legend(builder)
   builder.write_string(
     "The port follows `argminmax@0.7.1`, revision `f68aba5c251e9dc093f3939c0f9607c942228311`. The Rust crate is source provenance and is not timed here. The independent MoonBit linear reference and this library consume the same prepared values and return identical indices before timing. Correctness tests additionally use a sort-based oracle and exhaustive IEEE half-float formulas.\n\n" +
     "## Timer and dispatch\n\n" +
@@ -3335,7 +3548,7 @@ fn argminmax_report(
     "The core runner calibrates for about 100 ms, records ten batch samples, and applies 5% winsorization. Submicrosecond cases use 100000 iterations per batch. Every record preserves `runs`, `batch_size`, quartiles, variance, mean, median, range, commands, UTC timestamps, CPU, toolchain, and dependencies.\n\n",
   )
   builder.write_string(
-    "## Measured tradeoffs\n\nFor 4096 elements, these ratios divide the SIMD request's mean latency by the scalar mean. Values below 1 favor the SIMD request; the detailed tables mark possible noise.\n\n",
+    "## Measured tradeoffs\n\nFor 4096 elements, these speedups divide scalar mean latency by SIMD-request mean latency. Values above 1 favor the SIMD request; `*` marks possible noise in either measurement.\n\n",
   )
   for record in records {
     let backends = array(record, "backends")
@@ -3347,23 +3560,20 @@ fn argminmax_report(
       .unwrap_or_else(() => fail("Missing Wasm extrema results"))
     let native_values = index(backends[native_position])
     let wasm_values = index(backends[wasm_position])
-    let native_double = number(
-        native_values["argminmax-f64:own-simd:32768:0"],
-        "mean",
-      ) /
-      number(native_values["argminmax-f64:own-scalar:32768:0"], "mean")
-    let wasm_float = number(
-        wasm_values["argminmax-f32:own-simd:16384:0"],
-        "mean",
-      ) /
-      number(wasm_values["argminmax-f32:own-scalar:16384:0"], "mean")
-    let wasm_double = number(
-        wasm_values["argminmax-f64:own-simd:32768:0"],
-        "mean",
-      ) /
-      number(wasm_values["argminmax-f64:own-scalar:32768:0"], "mean")
+    let native_double = speedup(
+      native_values["argminmax-f64:own-scalar:32768:0"],
+      native_values["argminmax-f64:own-simd:32768:0"],
+    )
+    let wasm_float = speedup(
+      wasm_values["argminmax-f32:own-scalar:16384:0"],
+      wasm_values["argminmax-f32:own-simd:16384:0"],
+    )
+    let wasm_double = speedup(
+      wasm_values["argminmax-f64:own-scalar:32768:0"],
+      wasm_values["argminmax-f64:own-simd:32768:0"],
+    )
     builder.write_string(
-      "- **\{text(record, "os")}:** native Double \{decimal(native_double)}x; Wasm Float \{decimal(wasm_float)}x; Wasm Double \{decimal(wasm_double)}x.\n",
+      "- **\{text(record, "os")}:** native Double \{native_double}; Wasm Float \{wasm_float}; Wasm Double \{wasm_double}.\n",
     )
   }
   builder.write_string(
@@ -3503,7 +3713,8 @@ fn argminmax_self_test(statistics : Json) -> Unit raise {
   assert_true(rendered.find("1944 measurements") is Some(_))
   assert_true(rendered.find("4096 Float elements") is Some(_))
   assert_true(
-    rendered.find("native Double 1x; Wasm Float 1x; Wasm Double 1x") is Some(_),
+    rendered.find("native Double 1x*; Wasm Float 1x*; Wasm Double 1x*")
+    is Some(_),
   )
   assert_true(rendered.find("Runner context") is Some(_))
   let crlf = snapshots.copy()

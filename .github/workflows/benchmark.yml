@@ -26,8 +26,8 @@ on:
       - "**/moon.mod"
       - "**/moon.pkg"
       - "benchmarks/moon.work"
-      - "scripts/benchmark*.mbtx"
-      - ".github/workflows/benchmark.yml"
+      # Report rendering is checked by CI; workflow-only edits use workflow_dispatch.
+      - "scripts/benchmark.mbtx"
       - ".github/actions/setup-moonbit/action.yml"
 
 permissions:

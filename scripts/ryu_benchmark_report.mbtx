@@ -355,6 +355,21 @@ fn latency(summary : Json) -> String raise {
 }
 
 ///|
+/// Compares unrounded core and Ryu latencies, propagating noise from either input.
+fn speedup(reference : Json, candidate : Json) -> String raise {
+  let ratio = number(reference, "mean") / number(candidate, "mean")
+  let value = (ratio * 1000).round() / 1000
+  value.to_string() +
+  "x" +
+  (if number(reference, "std_dev_pct") >= 5 ||
+    number(candidate, "std_dev_pct") >= 5 {
+    "*"
+  } else {
+    ""
+  })
+}
+
+///|
 /// Writes representative rows while preserving every case in the accompanying JSON.
 fn table(
   builder : StringBuilder,
@@ -372,12 +387,12 @@ fn table(
         "| " + cell(text(record, "os")) + "/" + text(backend, "backend"),
       )
       for (workload, bytes) in rows {
-        builder.write_string(
-          " | " + latency(summaries["\{workload}:own:\{bytes}:0"]),
-        )
+        let own = summaries["\{workload}:own:\{bytes}:0"]
+        builder.write_string(" | " + latency(own))
         if compare {
+          let core = summaries["\{workload}:core:\{bytes}:0"]
           builder.write_string(
-            " / " + latency(summaries["\{workload}:core:\{bytes}:0"]),
+            " / " + latency(core) + " (" + speedup(core, own) + ")",
           )
         }
       }
@@ -415,7 +430,7 @@ fn report(records : Array[Json], is_local : Bool) -> String raise {
     )
   }
   builder.write_string(
-    "All latencies are **nanoseconds per public invocation**. `*` marks CV >= 5% and possible noise. Compare within one OS/backend; a lower mean alone does not establish statistical significance.\n\n## Shortest formatting and parsing\n\nCells show **Ryu / core adapted**. The core formatter's conversion to the exact Ryu scientific layout and negative-zero sign is included.\n\n| OS/backend | Double 0.3 | Float 0.3 | Parse Double pi | Parse Float pi |\n| --- | --- | --- | --- | --- |\n",
+    "All latencies are **nanoseconds per public invocation**. `*` marks CV >= 5% and possible noise. Compare within one OS/backend; a lower mean alone does not establish statistical significance.\n\n## Shortest formatting and parsing\n\nCells show **Ryu / core adapted (Ryu speedup)**. Speedup divides the unrounded core mean by the Ryu mean: above 1 favors Ryu, below 1 favors core; `*` flags CV >= 5% in either measurement. The core formatter's conversion to the exact Ryu scientific layout and negative-zero sign is included.\n\n| OS/backend | Double 0.3 | Float 0.3 | Parse Double pi | Parse Float pi |\n| --- | --- | --- | --- | --- |\n",
   )
   table(
     builder,
@@ -595,6 +610,26 @@ fn self_test() -> Unit raise {
   )
   assert_eq(latency({ "mean": 1.25, "std_dev_pct": 4.9 }), "1250")
   assert_eq(latency({ "mean": 1.25, "std_dev_pct": 5.0 }), "1250*")
+  let slow : Json = { "mean": 2, "std_dev_pct": 4.9 }
+  let fast : Json = { "mean": 1, "std_dev_pct": 0 }
+  let noisy : Json = { "mean": 1, "std_dev_pct": 5 }
+  assert_eq(speedup(slow, fast), "2x")
+  assert_eq(speedup(fast, slow), "0.5x")
+  assert_eq(speedup(slow, noisy), "2x*")
+  assert_eq(speedup(noisy, slow), "0.5x*")
+  assert_eq(
+    speedup({ "mean": 1.0004, "std_dev_pct": 0 }, {
+      "mean": 0.50049,
+      "std_dev_pct": 0,
+    }),
+    "1.999x",
+  )
+  let compared = StringBuilder()
+  table(compared, records, [("d2s-short", 8)], true)
+  assert_true(compared.to_string().find("1000* / 1000* (1x*)") is Some(_))
+  let own_only = StringBuilder()
+  table(own_only, records, [("fixed-short-6", 8)], false)
+  assert_true(own_only.to_string().find("x)") is None)
   for
     (key, replacement) in [
       (

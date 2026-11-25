@@ -105,6 +105,9 @@ GiB/s is `bytes * 1e6 / mean_us / 2^30`. The recorded runner calibrates near
 100 ms, takes ten batch samples, and uses 5% winsorization. Submicrosecond cases
 use 100000 iterations per batch. Raw statistics remain unrounded in JSON;
 CV >= 5% marks possible noise and a bold best mean makes no significance claim.
+Generated tables include scalar/SIMD speedup and the fastest shown own path
+against the fastest matching reference. Ratios use unrounded mean latencies;
+above 1 is faster, and `*` flags CV >= 5% in either measurement.
 
 CI is configured for three systems by four backends. A published
 `BENCHMARK-DATA.json` requires **4440 measurements** from one complete CI source
