@@ -2,6 +2,16 @@ name: Benchmarks
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Libraries to measure
+        type: choice
+        default: all
+        options:
+          - all
+          - base64
+          - crc32
+          - url
   push:
     branches: [main]
     paths:
@@ -25,19 +35,21 @@ jobs:
   measure:
     name: Measure (${{ matrix.flag }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             flag: linux
-          - os: macos-latest
+          # The official MoonBit macOS toolchain requires ARM64; pin the maintained image.
+          - os: macos-15
             flag: macos
           - os: windows-latest
             flag: windows
     env:
       BENCHMARK_RUNNER_LABEL: ${{ matrix.os }}
+      BENCHMARK_SCOPE: ${{ inputs.scope || 'all' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,7 +67,7 @@ jobs:
       - name: Verify correctness before measuring
         run: moon -C benchmarks test --target all
       - name: Measure workspace libraries on all backends sequentially
-        run: moon run scripts/benchmark.mbtx crc32 url
+        run: moon run scripts/benchmark.mbtx
       - name: Preserve complete measurements and raw logs
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,54 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/base64"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn forgiving_decode(BytesView, simd? : Bool) -> Bytes raise Base64Error
+
+pub fn forgiving_decode_inplace(FixedArray[Byte], length? : Int32, simd? : Bool) -> Int32 raise Base64Error
+
+pub fn forgiving_decode_into(BytesView, FixedArray[Byte], offset? : Int32, simd? : Bool) -> Int32 raise Base64Error
+
+pub fn forgiving_decode_string(StringView, simd? : Bool) -> Bytes raise Base64Error
+
+pub let standard : Base64
+
+pub let standard_no_pad : Base64
+
+pub let url_safe : Base64
+
+pub let url_safe_no_pad : Base64
+
+// Errors
+#derive(Eq, @debug.Debug)
+pub suberror Base64Error {
+  InvalidInput
+  OutputTooSmall
+}
+
+// Types and methods
+#derive(Eq, @debug.Debug)
+type Base64
+pub fn Base64::charset(Self) -> BytesView
+pub fn Base64::check(Self, BytesView, simd? : Bool) -> Unit raise Base64Error
+pub fn Base64::decode(Self, BytesView, simd? : Bool) -> Bytes raise Base64Error
+pub fn Base64::decode_append(Self, BytesView, @buffer.Buffer, simd? : Bool) -> Unit raise Base64Error
+pub fn Base64::decode_inplace(Self, FixedArray[Byte], length? : Int32, simd? : Bool) -> Int32 raise Base64Error
+pub fn Base64::decode_into(Self, BytesView, FixedArray[Byte], offset? : Int32, simd? : Bool) -> Int32 raise Base64Error
+pub fn Base64::decode_string(Self, StringView, simd? : Bool) -> Bytes raise Base64Error
+pub fn Base64::decoded_length(Self, BytesView) -> Int32 raise Base64Error
+pub fn Base64::encode(Self, BytesView, simd? : Bool) -> Bytes
+pub fn Base64::encode_append(Self, BytesView, StringBuilder, simd? : Bool) -> Unit
+pub fn Base64::encode_into(Self, BytesView, FixedArray[Byte], offset? : Int32, simd? : Bool) -> Int32 raise Base64Error
+pub fn Base64::encode_to_string(Self, BytesView, simd? : Bool) -> String
+pub fn Base64::encoded_length(Self, Int32) -> Int32
+pub fn Base64::estimated_decoded_length(Self, Int32) -> Int32
+pub fn Base64::new(url_safe? : Bool, padding? : Bool) -> Self
+
+// Type aliases
+
+// Traits
