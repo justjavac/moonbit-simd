@@ -18,6 +18,7 @@ on:
           - uuid
           - ryu
           - memchr
+          - wc
   push:
     branches: [main]
     paths:

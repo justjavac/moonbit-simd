@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/core/simd",
+}
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+// Vector declarations are excluded on Wasm GC and JavaScript.
+
+warnings = "-alert_experimental-unused_package"

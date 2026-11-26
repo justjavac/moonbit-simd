@@ -35,9 +35,10 @@ async fn main {
   for module_dir in directories {
     guard [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
+      "wc",
     ].contains(module_dir) else {
       fail(
-        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, argminmax, uuid, ryu, or memchr",
+        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, argminmax, uuid, ryu, memchr, or wc",
       )
     }
     let packages = if module_dir == "memchr" {

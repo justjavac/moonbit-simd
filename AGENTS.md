@@ -299,7 +299,7 @@ moon test --target all
 moon info
 moon fmt
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi argminmax uuid ryu memchr
+moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi argminmax uuid ryu memchr wc
 ```
 
 For comparison changes, also run `moon -C benchmarks check --target all --deny-warn`,
@@ -339,8 +339,8 @@ and global hooks; do not change identity settings or print authentication tokens
 - [crc32fast](https://crates.io/crates/crc32fast): CRC32 API and algorithm reference.
 - [CRC32 guide](crc32/README.md), [URL guide](url/README.md),
   [UTF-8 guide](utf8/README.md), [Base64 guide](base64/README.md),
-  [integer guide](atoi/README.md), and
-  [UUID guide](uuid/README.md): module-specific contracts.
+  [integer guide](atoi/README.md), [UUID guide](uuid/README.md), and
+  [word count guide](wc/README.md): module-specific contracts.
 - [Comparison harness](benchmarks/README.md), [collector](scripts/benchmark.mbtx),
   [report generator](scripts/benchmark_report.mbtx), and
   [native coverage exporter](scripts/coverage_report.mbtx): shared automation.

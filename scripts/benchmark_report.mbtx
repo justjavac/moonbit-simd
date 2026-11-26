@@ -240,14 +240,26 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       fail("Missing extrema release command or UTC timestamps")
     }
   }
+  if package_dir == "wc" {
+    validate_wc_inventory(summaries)
+    guard text(value, "command") ==
+      "moon -C benchmarks bench --target \{backend} --release --no-parallelize -p justjavac/benchmarks/wc" &&
+      text(value, "started_at_utc").length() == 20 &&
+      text(value, "finished_at_utc").length() == 20 &&
+      text(value, "started_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc").has_suffix("Z") &&
+      text(value, "finished_at_utc") >= text(value, "started_at_utc") else {
+      fail("Missing word-count release command or UTC timestamps")
+    }
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
     let _ = case_parts(summary)
     guard !names.contains(name) else { fail("Duplicate benchmark: \{name}") }
     names[name] = ()
-    if package_dir == "atoi" {
-      validate_atoi_statistics(summary)
+    if package_dir == "atoi" || package_dir == "wc" {
+      validate_distribution(summary)
     }
     if package_dir == "argminmax" {
       validate_argminmax_statistics(summary)
@@ -733,6 +745,21 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
   let canonical_cases : Map[String, Unit] = Map([])
   for record in records {
     let os = text(record, "os")
+    if package_dir == "wc" {
+      validate_wc_record(record)
+      let attempt = @string.parse_int(text(record, "run_attempt"))
+      guard attempt > 0 &&
+        field(record, "working_tree_dirty") == Json::boolean(false) &&
+        field(record, "workload_metadata") == field(first, "workload_metadata") &&
+        toolchain_versions(text(record, "toolchain")) ==
+        toolchain_versions(text(first, "toolchain")) &&
+        text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+        text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+        fail("Mixed word-count manifests, toolchains, or measurement order")
+      }
+    }
     if package_dir == "argminmax" {
       validate_argminmax_metadata(record)
       guard text(record, "run_attempt") != "" &&
@@ -1053,6 +1080,9 @@ fn highlights(builder : StringBuilder, records : Array[Json]) -> Unit raise {
 /// Builds a concise, information-rich report backed by a complete JSON snapshot.
 fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
+  if package_dir == "wc" {
+    return wc_report(records)
+  }
   if package_dir == "atoi" {
     return atoi_report(records)
   }
@@ -2522,7 +2552,8 @@ fn self_test() -> Unit raise {
     "runs": 10,
   }
   argminmax_self_test(statistics)
-  validate_atoi_statistics(statistics)
+  validate_distribution(statistics)
+  wc_self_test()
   let snapshots = atoi_snapshot_fixture(statistics)
   validate_snapshot(snapshots, "atoi")
   let crlf = snapshots.copy()
@@ -2589,7 +2620,7 @@ fn self_test() -> Unit raise {
       }
       _ => fail("Expected a test statistic object")
     }
-    try validate_atoi_statistics(malformed) catch {
+    try validate_distribution(malformed) catch {
       _ => ()
     } noraise {
       _ => fail("Malformed integer sample metadata must fail")
@@ -2744,11 +2775,11 @@ fn validate_atoi_inventory(summaries : Array[Json]) -> Unit raise {
 }
 
 ///|
-/// Checks all integer distribution statistics and integral sampling metadata.
-fn validate_atoi_statistics(summary : Json) -> Unit raise {
+/// Checks distribution statistics and integral sampling metadata.
+fn validate_distribution(summary : Json) -> Unit raise {
   guard array(summary, "quartiles")
     is [Number(low, ..), Number(middle, ..), Number(high, ..)] else {
-    fail("Integer quartiles require three numeric values")
+    fail("Quartiles require three numeric values")
   }
   let minimum = number(summary, "min")
   let maximum = number(summary, "max")
@@ -2761,14 +2792,14 @@ fn validate_atoi_statistics(summary : Json) -> Unit raise {
     middle <= high + tolerance &&
     high <= maximum + tolerance &&
     (middle - number(summary, "median")).abs() <= tolerance else {
-    fail("Invalid integer quartile range")
+    fail("Invalid quartile range")
   }
   for
     statistic in [
       "sum", "variance", "median_abs_dev", "median_abs_dev_pct", "iqr",
     ] {
     guard number(summary, statistic) >= 0 else {
-      fail("Invalid integer statistic: " + statistic)
+      fail("Invalid statistic: " + statistic)
     }
   }
   let batch = number(summary, "batch_size")
@@ -2777,7 +2808,7 @@ fn validate_atoi_statistics(summary : Json) -> Unit raise {
     (number(summary, "iqr") - (high - low)).abs() <= tolerance &&
     (number(summary, "sum") - number(summary, "mean") * number(summary, "runs")).abs() <=
     tolerance * 10 else {
-    fail("Inconsistent integer distribution or batch metadata")
+    fail("Inconsistent distribution or batch metadata")
   }
 }
 
@@ -3177,8 +3208,10 @@ async fn main {
       ryu_report(["--local", arguments[3], arguments[4]])
       return
     }
-    guard ["atoi", "utf8", "argminmax"].contains(arguments[2]) else {
-      fail("Local rendering supports integer, UTF-8, and extrema artifacts")
+    guard ["atoi", "utf8", "argminmax", "wc"].contains(arguments[2]) else {
+      fail(
+        "Local rendering supports integer, UTF-8, extrema, and word-count artifacts",
+      )
     }
     let record = @json.parse(@fs.read_text(arguments[3]))
     let markdown = if arguments[2] == "utf8" {
@@ -3187,6 +3220,9 @@ async fn main {
     } else if arguments[2] == "argminmax" {
       validate_local_argminmax(record)
       argminmax_report([record], is_local=true)
+    } else if arguments[2] == "wc" {
+      validate_local_wc(record)
+      wc_report([record], is_local=true)
     } else {
       validate_local_atoi(record)
       atoi_report([record], is_local=true)
@@ -3812,4 +3848,178 @@ fn argminmax_self_test(statistics : Json) -> Unit raise {
   } noraise {
     _ => fail("Local extrema measurements accepted as CI")
   }
+}
+
+///|
+/// Defines the exact word-count workloads for report validation and display.
+fn wc_workloads() -> Array[(String, Int32, Int32, Int32)] {
+  [
+    ("short", 13, 0, 0),
+    ("offset", 33, 3, 0),
+    ("text", 4096, 0, 0),
+    ("binary", 65539, 1, 0),
+    ("stream63", 4096, 0, 63),
+    ("stream8k", 1048576, 0, 8192),
+  ]
+}
+
+///|
+/// Rejects missing, duplicated, or relabeled word-count cases and metadata.
+fn validate_wc_inventory(summaries : Array[Json]) -> Unit raise {
+  guard summaries.length() == 18 else { fail("Expected 18 word-count cases") }
+  let indexed : Map[String, Json] = Map([])
+  for summary in summaries {
+    indexed[text(summary, "name")] = summary
+  }
+  for (name, bytes, offset, chunk) in wc_workloads() {
+    for implementation in ["reference", "own-scalar", "own-simd"] {
+      let key = "\{name}:\{implementation}:\{bytes}:\{offset}"
+      guard indexed.get(key) is Some(summary) &&
+        number(summary, "input_bytes") == bytes.to_double() &&
+        number(summary, "input_offset") == offset.to_double() &&
+        number(summary, "stream_chunk_bytes") == chunk.to_double() else {
+        fail("Missing or mismatched word-count case: " + key)
+      }
+    }
+  }
+}
+
+///|
+/// Verifies word-count upstream, comparison version, workload, and runner metadata.
+fn validate_wc_record(record : Json) -> Unit raise {
+  guard field(record, "ported_upstream") ==
+    {
+      "package": "fastlwc",
+      "repository": "https://github.com/expr-fi/fastlwc",
+      "revision": "b8d3a3839161d0487a25610d65a077d8431de1f0",
+      "license": "MIT",
+      "timed": false,
+    } &&
+    array(record, "comparison_dependencies") ==
+    [
+      {
+        "label": "reference",
+        "package": "justjavac/benchmarks/wc",
+        "version": "0.1.0",
+        "license": "MIT",
+        "api": "Independent scalar scan counting word ends with explicit ASCII whitespace",
+      },
+    ] else {
+    fail("Unexpected word-count upstream or comparison metadata")
+  }
+  let workload = field(record, "workload_metadata")
+  let cpu = field(record, "cpu")
+  guard number(workload, "cases_per_backend") == 18 &&
+    ["forward", "reversed"].contains(text(workload, "measurement_order")) &&
+    text(workload, "prepared") != "" &&
+    text(workload, "timed") != "" &&
+    text(cpu, "architecture") != "" &&
+    text(cpu, "model") != "" else {
+    fail("Missing word-count workload or runner metadata")
+  }
+}
+
+///|
+/// Checks an explicitly local word-count artifact with one to four unique backends.
+fn validate_local_wc(record : Json) -> Unit raise {
+  guard text(record, "source") == "local" &&
+    text(record, "module") == "justjavac/wc" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" else {
+    fail("Expected local word-count measurements")
+  }
+  validate_wc_record(record)
+  let backends = array(record, "backends")
+  guard !backends.is_empty() else { fail("Missing local word-count results") }
+  let seen : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !seen.contains(name) else {
+      fail("Duplicate local word-count backend")
+    }
+    seen[name] = ()
+    validate_backend(backend, "wc")
+  }
+}
+
+///|
+/// Renders representative latency and throughput alongside the complete JSON data.
+fn wc_report(records : Array[Json], is_local~ : Bool = false) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# Word count benchmarks\n\n")
+  if is_local {
+    let order = text(field(first, "workload_metadata"), "measurement_order")
+    builder.write_string("Local measurements, \{order} order.\n\n")
+  } else {
+    let revision = text(first, "source_commit")
+    let repository = text(first, "repository")
+    builder.write_string(
+      "Attempt \{text(first, "run_attempt")} of [CI run \{text(first, "run_id")}](\{text(first, "run_url")}) measured [\{revision[:7]}](https://github.com/\{repository}/commit/\{revision}).\n\n",
+    )
+  }
+  builder.write_string(
+    "The one-shot and streaming APIs count LF, ASCII-delimited words, and bytes. SIMD requests fall back to scalar on short inputs, Wasm GC, and JavaScript. Streaming includes counter creation, updates on prepared chunks, and the snapshot. The independent reference uses the same bytes and chunk schedule. An asterisk marks CV ≥ 5%.\n\n",
+  )
+  builder.write_string(
+    "| OS / backend | Workload | Unit | Reference | Scalar | SIMD request |\n| --- | --- | --- | ---: | ---: | ---: |\n",
+  )
+  for record in records {
+    let os = text(record, "os")
+    for backend in array(record, "backends") {
+      let target = text(backend, "backend")
+      let cases = index(backend)
+      for (name, bytes, offset, _) in wc_workloads() {
+        if name != "short" && name != "binary" && name != "stream8k" {
+          continue
+        }
+        let unit = if name == "short" { "ns" } else { "GiB/s" }
+        builder.write_string("| \{os} / \{target} | \{name} | \{unit} |")
+        for implementation in ["reference", "own-scalar", "own-simd"] {
+          let summary = cases["\{name}:\{implementation}:\{bytes}:\{offset}"]
+          builder.write_string(" \{metric(summary, unit, bytes.to_double())} |")
+        }
+        builder.write_string("\n")
+      }
+    }
+  }
+  builder.write_string("\n## Runners\n\n")
+  for record in records {
+    let cpu = field(record, "cpu")
+    let runner = if is_local {
+      ""
+    } else {
+      " · \{cell(text(record, "runner_label"))} \{cell(text(record, "image_version"))}"
+    }
+    builder.write_string(
+      "- \{text(record, "os")} · \{cell(text(cpu, "model"))} (\{cell(text(cpu, "architecture"))})\{runner}\n",
+    )
+  }
+  builder.write_string(
+    "\n```text\n\{toolchain_versions(text(first, "toolchain"))}\n```\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Exercises word-count metadata validation and rejects a substituted workload.
+fn wc_self_test() -> Unit raise {
+  let cases : Array[Json] = []
+  for (name, bytes, offset, chunk) in wc_workloads() {
+    for implementation in ["reference", "own-scalar", "own-simd"] {
+      cases.push({
+        "name": "\{name}:\{implementation}:\{bytes}:\{offset}",
+        "input_bytes": bytes,
+        "input_offset": offset,
+        "stream_chunk_bytes": chunk,
+      })
+    }
+  }
+  validate_wc_inventory(cases)
+  must_reject(() => validate_wc_inventory(cases[:17].to_owned()))
+  let substitutions = cases.copy()
+  substitutions[0] = changed(cases[0], "stream_chunk_bytes", 1)
+  must_reject(() => validate_wc_inventory(substitutions))
+  substitutions[0] = cases[1]
+  must_reject(() => validate_wc_inventory(substitutions))
 }
