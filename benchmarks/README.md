@@ -174,6 +174,7 @@ the public counter, updating it, and reading the totals.
 
 Run `moon -C benchmarks test wc --target all` and
 `moon run scripts/benchmark.mbtx wc`. `WC_BENCHMARK_REVERSE=1` reverses
-implementation order and saves a distinct local artifact. See the
-[word-count benchmark guide](../wc/BENCHMARK.md) for workload sizes and local
-report commands.
+implementation order and saves a distinct local artifact. Render a local run
+with `moon run scripts/benchmark_report.mbtx --local wc _build/benchmarks/wc/linux.json _build/wc-report`.
+The [word-count benchmark report](../wc/BENCHMARK.md) summarizes the selected CI
+snapshot.
