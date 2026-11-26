@@ -1,0 +1,187 @@
+----
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+----
+
+///|
+/// Reads the direct workspace member names without maintaining another module catalog.
+async fn workspace_libraries() -> Array[String] {
+  let source = @fs.read_text("moon.work")
+  let result : Array[String] = []
+  for token in source.split("\"") {
+    if token.has_prefix("./") {
+      let name = token[2:].to_owned()
+      guard !name.is_empty() &&
+        name.all(char => char is ('a'..<='z' | '0'..<='9' | '_')) &&
+        !result.contains(name) else {
+        fail("Expected unique direct workspace members")
+      }
+      result.push(name)
+    }
+  }
+  guard !result.is_empty() else { fail("No workspace libraries were found") }
+  result
+}
+
+///|
+/// Selects only libraries whose production or comparison sources changed on a push.
+fn affected(
+  libraries : ArrayView[String],
+  paths : ArrayView[String],
+) -> Array[String] {
+  let selected : Map[String, Unit] = Map([])
+  for raw in paths {
+    let path = raw.replace_all(old="\\", new="/")
+    let source = path.has_suffix(".mbt") ||
+      path.has_suffix("/moon.mod") ||
+      path.has_suffix("/moon.pkg")
+    if !source {
+      continue
+    }
+    for name in libraries {
+      if path.has_prefix(name + "/") ||
+        path.has_prefix("benchmarks/" + name + "/") {
+        selected[name] = ()
+      }
+    }
+    if path.has_prefix("benchmarks/vendor/tonyfettes-utf8/") {
+      selected["utf8"] = ()
+    }
+    if path.has_prefix("memchr/") {
+      selected["bytecount"] = ()
+    }
+    let nested = path["benchmarks/".length():]
+    if path.has_prefix("benchmarks/") &&
+      nested.find("/") is None &&
+      (path.has_suffix(".mbt") || path == "benchmarks/moon.pkg") {
+      selected["crc32"] = ()
+    }
+  }
+  libraries.filter(name => selected.contains(name))
+}
+
+///|
+/// Expands selected libraries into independent OS jobs while keeping four backends sequential.
+fn matrix(libraries : ArrayView[String]) -> Json {
+  let jobs : Array[Json] = []
+  for name in libraries {
+    for
+      (os, flag) in [
+        ("ubuntu-latest", "linux"),
+        ("macos-15", "macos"),
+        ("windows-latest", "windows"),
+      ] {
+      jobs.push({ "library": name, "os": os, "flag": flag })
+    }
+  }
+  { "include": Json(jobs) }
+}
+
+///|
+/// Checks path routing, documentation-only exclusions, shared sources, and matrix isolation.
+fn self_test() -> Unit raise {
+  let libraries = ["crc32", "url", "utf8", "wc", "memchr", "bytecount"]
+  assert_eq(affected(libraries, ["bytecount/vector.mbt"]), ["bytecount"])
+  assert_eq(affected(libraries, ["memchr/vector.mbt"]), ["memchr", "bytecount"])
+  assert_eq(
+    affected(libraries, [
+      "bytecount/vector.mbt", "benchmarks/bytecount/moon.pkg",
+    ]),
+    ["bytecount"],
+  )
+  assert_eq(affected(libraries, ["wc/vector.mbt", "benchmarks/wc/moon.pkg"]), [
+    "wc",
+  ])
+  assert_eq(
+    affected(libraries, ["bytecount/README.md", "bytecount/BENCHMARK-DATA.json"]),
+    [],
+  )
+  assert_eq(
+    affected(libraries, [
+      "bytecount/vector.mbt", "moon.work", "scripts/benchmark.mbtx",
+    ]),
+    ["bytecount"],
+  )
+  assert_eq(
+    affected(libraries, ["benchmarks/vendor/tonyfettes-utf8/utf8.mbt"]),
+    ["utf8"],
+  )
+  assert_eq(affected(libraries, ["benchmarks/benchmark_wbtest.mbt"]), ["crc32"])
+  assert_eq(
+    affected(libraries, [
+      "url/moon.mod", "bytecount/moon.pkg", "bytecount\\vector.mbt",
+    ]),
+    ["url", "bytecount"],
+  )
+  assert_eq(
+    affected(libraries, [
+      "scripts/benchmark_report.mbtx", ".github/workflows/benchmark.yml",
+    ]),
+    [],
+  )
+  guard matrix(["bytecount"]) is { "include": Array(jobs), .. } else {
+    fail("Missing matrix")
+  }
+  assert_eq(jobs.length(), 3)
+  assert_eq(
+    jobs[0],
+    ({ "library": "bytecount", "os": "ubuntu-latest", "flag": "linux" } : Json),
+  )
+  println("Benchmark matrix self-test passed")
+}
+
+///|
+/// Emits a manual or changed-library matrix as GitHub step outputs and local diagnostic JSON.
+async fn main {
+  let args = @env.args()
+  if args.length() == 2 && args[1] == "--self-test" {
+    self_test()
+    return
+  }
+  let libraries = workspace_libraries()
+  let event = @env.get_env_var("BENCHMARK_EVENT").unwrap_or("push")
+  let selected = if event == "workflow_dispatch" {
+    let scope = @env.get_env_var("BENCHMARK_SCOPE").unwrap_or("all")
+    if scope == "all" {
+      libraries
+    } else {
+      guard libraries.contains(scope) else {
+        fail("Unknown benchmark library: " + scope)
+      }
+      [scope]
+    }
+  } else {
+    let before = @env.get_env_var("BENCHMARK_BASE").unwrap_or("")
+    let command = if before == "" || before.all(char => char == '0') {
+      ["ls-tree", "-r", "--name-only", "HEAD", "--"]
+    } else {
+      ["diff", "--name-only", "--no-renames", before, "HEAD", "--"]
+    }
+    let output = @shell.Cmd("git", command).output(max_output_bytes=2097152)
+    guard output.exit_code() == 0 else { fail(output.stderr()) }
+    affected(
+      libraries,
+      output.stdout().split("\n").map(line => line.to_owned()).to_array(),
+    )
+  }
+  let value = matrix(selected).stringify()
+  let output_file = @env.get_env_var("GITHUB_OUTPUT").unwrap_or("")
+  if output_file != "" {
+    let previous = @fs.read_text(output_file) catch { _ => "" }
+    @fs.write_text(
+      output_file,
+      previous +
+      "matrix=" +
+      value +
+      "\nhas_work=" +
+      (!selected.is_empty()).to_string() +
+      "\n",
+    )
+  }
+  println(value)
+}

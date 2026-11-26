@@ -25,6 +25,7 @@ for installation, APIs, and examples; [moon.work](moon.work) links local sources
 | [justjavac/ryu](ryu/README.md) | Float formatting and experimental decimal parsing | [Results](ryu/BENCHMARK.md) |
 | [justjavac/memchr](memchr/README.md) | Byte and substring search, finders, iteration | [Results](memchr/BENCHMARK.md) |
 | [justjavac/wc](wc/README.md) | LF, ASCII-delimited words, and byte counts with streaming | [Results](wc/BENCHMARK.md) |
+| [justjavac/bytecount](bytecount/README.md) | Occurrences of a byte and UTF-8 code point counts | [Benchmarks](bytecount/BENCHMARK.md) |
 
 ## Portability
 
@@ -55,6 +56,9 @@ compare matching operations within each OS/backend and retain complete CI
 snapshots in `BENCHMARK-DATA.json`. Local results stay labelled local.
 See [AGENTS.md](AGENTS.md) for development and coverage instructions, and the
 [benchmark workflow](.github/workflows/benchmark.yml) for the full CI matrix.
+
+Push benchmarks measure changed libraries in separate OS/library jobs.
+Select the manual scope `all` for a collection-wide performance run.
 
 Repository contributions are licensed under [MIT](LICENSE). Each module's
 `LICENSE` preserves required upstream copyrights and license notices.

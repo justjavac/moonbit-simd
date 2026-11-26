@@ -1,0 +1,12 @@
+import {
+  "moonbitlang/core/simd",
+}
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+  targets: { "scalar_js.mbt": [ "js" ], "vector_wasm.mbt": [ "wasm" ] },
+)
+
+// The SIMD import is used only by the linear-memory backends.
+
+warnings = "-alert_experimental-unused_package"

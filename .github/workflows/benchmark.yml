@@ -19,6 +19,7 @@ on:
           - ryu
           - memchr
           - wc
+          - bytecount
   push:
     branches: [main]
     paths:
@@ -29,6 +30,7 @@ on:
       - "benchmarks/moon.work"
       # Report rendering is checked by CI; workflow-only edits use workflow_dispatch.
       - "scripts/benchmark.mbtx"
+      - "scripts/benchmark_matrix.mbtx"
       - ".github/actions/setup-moonbit/action.yml"
 
 permissions:
@@ -39,24 +41,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Select benchmark libraries
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_work: ${{ steps.matrix.outputs.has_work }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install MoonBit
+        uses: ./.github/actions/setup-moonbit
+        with:
+          version: nightly
+      - name: Update the Mooncakes index
+        run: moon update
+      - name: Select changed libraries or the manual scope
+        id: matrix
+        env:
+          BENCHMARK_EVENT: ${{ github.event_name }}
+          BENCHMARK_BASE: ${{ github.event.before }}
+          BENCHMARK_SCOPE: ${{ inputs.scope || 'all' }}
+        run: moon run scripts/benchmark_matrix.mbtx
+
   measure:
-    name: Measure (${{ matrix.flag }})
+    name: Measure (${{ matrix.library }}/${{ matrix.flag }})
+    needs: plan
+    if: needs.plan.outputs.has_work == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            flag: linux
-          # The official MoonBit macOS toolchain requires ARM64; pin the maintained image.
-          - os: macos-15
-            flag: macos
-          - os: windows-latest
-            flag: windows
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       BENCHMARK_RUNNER_LABEL: ${{ matrix.os }}
-      BENCHMARK_SCOPE: ${{ inputs.scope || 'all' }}
+      BENCHMARK_SCOPE: ${{ matrix.library }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -73,20 +94,21 @@ jobs:
         run: moon update
       - name: Verify correctness before measuring
         run: moon -C benchmarks test --target all
-      - name: Measure workspace libraries on all backends sequentially
+      - name: Measure one library on all backends sequentially
         run: moon run scripts/benchmark.mbtx
       - name: Preserve complete measurements and raw logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-raw-${{ matrix.flag }}
+          name: benchmark-raw-${{ matrix.library }}-${{ matrix.flag }}
           path: _build/benchmarks/
           retention-days: 90
           if-no-files-found: warn
 
   report:
     name: Generate module reports
-    needs: measure
+    needs: [plan, measure]
+    if: needs.plan.outputs.has_work == 'true' && success()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -95,7 +117,7 @@ jobs:
         uses: ./.github/actions/setup-moonbit
         with:
           version: nightly
-      - name: Collect the three operating-system artifacts
+      - name: Collect the selected library and operating-system artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: benchmark-raw-*
