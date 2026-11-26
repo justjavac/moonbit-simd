@@ -35,13 +35,15 @@ pub fn Float16::from_bits(bits : UInt16) -> Float16 {
 }
 
 ///|
-/// Returns the original binary16 bits without normalization or mutation.
+/// Returns the exact input bits, including the sign of zero and the original
+/// NaN payload. The result can be passed to `from_bits` to reconstruct the value.
 pub fn Float16::to_bits(self : Float16) -> UInt16 {
   self.bits
 }
 
 ///|
-/// Detects binary16 NaNs, including signaling NaNs and either sign.
+/// Reports whether the binary16 exponent is all ones and the fraction is
+/// nonzero. This includes signaling NaNs of either sign. Infinity returns false.
 pub fn Float16::is_nan(self : Float16) -> Bool {
   (self.bits.to_int() & 0x7fff) > 0x7c00
 }
@@ -51,6 +53,13 @@ pub fn Float16::is_nan(self : Float16) -> Bool {
 /// Infinities retain their sign. NaN payload bits are shifted to the binary64
 /// fraction; backend floating-point operations may subsequently canonicalize
 /// them. The stored bits are never changed and no rounding is required.
+///
+/// ```mbt check
+/// test {
+///   assert_eq(@argminmax.Float16::from_bits(0x3E00).to_double(), 1.5)
+///   assert_true(@argminmax.Float16::from_bits(0x7C01).is_nan())
+/// }
+/// ```
 pub fn Float16::to_double(self : Float16) -> Double {
   let word = self.bits.to_uint()
   let sign = (word.to_uint64() & 0x8000UL) << 48
@@ -74,7 +83,8 @@ pub fn Float16::to_double(self : Float16) -> Double {
 }
 
 ///|
-/// Implements numeric equality, with signed zero equal and every NaN unequal.
+/// Compares binary16 values for numeric equality. The two zero encodings
+/// compare equal. If either operand is NaN, equality returns false.
 pub impl Eq for Float16 with fn equal(self, other) {
   !self.is_nan() &&
   !other.is_nan() &&
@@ -82,8 +92,10 @@ pub impl Eq for Float16 with fn equal(self, other) {
 }
 
 ///|
-/// Compares ordered binary16 values via their exact signed ordinal bits.
-/// NaNs lie outside the infinity ordinals; searches classify them separately.
+/// Returns a negative, zero, or positive result according to binary16 numeric
+/// order for non-NaNs. Both zero encodings compare as zero. NaN bit patterns
+/// are ordered outside the infinities by this implementation, and extrema
+/// searches apply their own NaN policy before comparing.
 pub impl Compare for Float16 with fn compare(self, other) {
   half_order(self.bits).compare(half_order(other.bits))
 }
@@ -106,13 +118,15 @@ pub fn BFloat16::from_bits(bits : UInt16) -> BFloat16 {
 }
 
 ///|
-/// Returns the original bfloat16 bits without normalization or mutation.
+/// Returns the exact input bits, including the sign of zero and the original
+/// NaN payload. Use `from_bits` to reconstruct the value.
 pub fn BFloat16::to_bits(self : BFloat16) -> UInt16 {
   self.bits
 }
 
 ///|
-/// Detects bfloat16 NaNs of either sign, including signaling encodings.
+/// Reports whether the bfloat16 exponent is all ones and the fraction is
+/// nonzero. This includes signaling NaNs of either sign. Infinity returns false.
 pub fn BFloat16::is_nan(self : BFloat16) -> Bool {
   (self.bits.to_int() & 0x7fff) > 0x7f80
 }
@@ -126,7 +140,8 @@ pub fn BFloat16::to_double(self : BFloat16) -> Double {
 }
 
 ///|
-/// Implements numeric equality, identifying signed zero and rejecting NaN ties.
+/// Compares bfloat16 values for numeric equality. The two zero encodings
+/// compare equal. If either operand is NaN, equality returns false.
 pub impl Eq for BFloat16 with fn equal(self, other) {
   !self.is_nan() &&
   !other.is_nan() &&
@@ -134,8 +149,10 @@ pub impl Eq for BFloat16 with fn equal(self, other) {
 }
 
 ///|
-/// Compares bfloat16 values through their signed ordinal bit representation.
-/// Searches classify NaNs before comparing their otherwise unordered values.
+/// Returns a negative, zero, or positive result according to bfloat16 numeric
+/// order for non-NaNs. Both zero encodings compare as zero. NaN bit patterns
+/// are ordered outside the infinities by this implementation, and extrema
+/// searches apply their own NaN policy before comparing.
 pub impl Compare for BFloat16 with fn compare(self, other) {
   half_order(self.bits).compare(half_order(other.bits))
 }

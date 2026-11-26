@@ -9,9 +9,10 @@ suberror Utf8Error {
 }
 
 ///|
-/// Returns the number of valid bytes before the first malformed sequence.
-/// The offset identifies its leading byte, or the unexpected continuation byte.
-/// It counts bytes rather than Unicode scalars or UTF-16 code units.
+/// Returns the UTF-8 prefix length in bytes, measured from the start of the
+/// supplied view. The offset is the first byte of an invalid or incomplete
+/// sequence. An unexpected continuation byte after a valid prefix is itself
+/// the first invalid byte.
 pub fn Utf8Error::valid_up_to(self : Utf8Error) -> Int32 {
   let Utf8Error(valid_up_to~, ..) = self
   valid_up_to
@@ -28,7 +29,10 @@ pub fn Utf8Error::error_len(self : Utf8Error) -> Int32? {
 }
 
 ///|
-/// Displays the same invalid-versus-incomplete distinction as simdutf8 compat.
+/// Writes the relative byte offset to the supplied logger, including the
+/// error length for an invalid sequence and an incomplete-sequence message
+/// for a truncated suffix. Use `valid_up_to()` and `error_len()` for structured
+/// diagnostics.
 pub impl Show for Utf8Error with fn output(self, logger) {
   let Utf8Error(valid_up_to~, error_len~) = self
   match error_len {

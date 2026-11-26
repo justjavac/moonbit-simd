@@ -2,14 +2,28 @@
 // Derived from Ryu under the Boost Software License 1.0; see LICENSE.
 
 ///|
-/// Preserves the failure statuses of upstream's experimental bounded parser.
+/// Reports the first syntax or digit-budget error from `s2d` or `s2f`.
+/// These errors follow the upstream scan order. A numeric overflow after
+/// successful parsing produces signed infinity.
+///
+/// ```mbt check
+/// test {
+///   try @ryu.s2d("123456789012345678") catch {
+///     error => assert_eq(error, @ryu.InputTooLong)
+///   } noraise {
+///     _ => fail("expected the binary64 mantissa digit limit")
+///   }
+/// }
+/// ```
 #derive(Debug, Eq)
 pub(all) suberror ParseError {
   /// The complete input view is empty.
   InputTooShort
-  /// The mantissa or exponent exceeds the upstream digit budget.
+  /// The mantissa has more than 17 significant digits for `s2d` or nine
+  /// for `s2f`, or the exponent has more than four.
   InputTooLong
-  /// The input contains a rejected character, sign, or repeated decimal point.
+  /// The input contains a character outside its allowed position in the
+  /// decimal grammar, such as a leading plus or repeated decimal point.
   MalformedInput
 }
 

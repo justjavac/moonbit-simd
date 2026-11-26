@@ -186,9 +186,12 @@ fn validate_backend(value : Json) -> Unit raise {
 ///|
 /// Verifies pinned upstream identity and both required core adapter descriptions.
 fn validate_metadata(record : Json) -> Unit raise {
+  let comparison_manifest = text(record, "comparison_manifest")
   guard text(record, "module") == "justjavac/ryu" &&
     text(record, "module_manifest").find("justjavac/ryu") is Some(_) &&
-    text(record, "comparison_manifest").find("justjavac/ryu@0.1.0") is Some(_) &&
+    ["0.1.0", "0.1.1"].any(version => {
+      comparison_manifest.find("justjavac/ryu@" + version) is Some(_)
+    }) &&
     text(field(record, "cpu"), "model") != "" &&
     text(record, "toolchain") != "" &&
     text(record, "node") != "" else {

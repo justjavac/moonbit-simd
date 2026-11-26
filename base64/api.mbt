@@ -1,10 +1,13 @@
 ///|
 /// Encodes `input` into a newly allocated ASCII byte sequence.
 ///
-/// Empty input returns empty bytes. Input views are read within their bounds.
-/// `simd=true` requests V128 on native/Wasm, with a scalar short-input path
-/// and scalar fallback on Wasm GC/JS. Panics if the encoded length overflows.
-/// The input and configuration are unchanged; the returned bytes are independent.
+/// Uses this configuration's alphabet and terminal padding. Empty input
+/// returns empty bytes. `input` is borrowed and can start at any byte offset.
+/// Panics if the encoded size is outside `Int32`.
+///
+/// The default requests vectors on linear-memory Wasm and scalar code
+/// elsewhere. `simd=true` requests V128 on native or linear-memory Wasm.
+/// Short views, Wasm GC, and JS use scalar processing.
 pub fn Base64::encode(
   self : Base64,
   input : BytesView,
@@ -46,6 +49,16 @@ pub fn Base64::encode_to_string(
 /// overflow as `encoded_length` does. Bytes outside the written range remain
 /// unchanged. Immutable `BytesView` input is independent of the mutable array.
 /// Uses the same SIMD and fallback policy as `encode`.
+///
+/// ```mbt check
+/// test {
+///   let output = FixedArray::make(8, b'!')
+///   assert_eq(@base64.standard.encode_into(b"foo", output, offset=2), 4)
+///   assert_eq(output[1], b'!')
+///   assert_eq(output[2], b'Z')
+///   assert_eq(output[6], b'!')
+/// }
+/// ```
 pub fn Base64::encode_into(
   self : Base64,
   input : BytesView,

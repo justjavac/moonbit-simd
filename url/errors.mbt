@@ -6,6 +6,7 @@
 /// are normalized rather than raised. A failed parse does not modify its base.
 #derive(Debug, Eq)
 pub(all) suberror ParseError {
+  /// Carries a diagnostic message for an invalid URL or domain component.
   InvalidUrl(String)
 }
 

@@ -1,5 +1,7 @@
 ///|
-/// Implements range-checked decimal parsing for Byte.
+/// Parses an unsigned eight-bit value from zero through 255.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. Leading
+/// zeroes count toward consumption and are accepted in either zero mode.
 pub impl Parse for Byte with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -24,7 +26,9 @@ pub impl Parse for Byte with fn parse_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for Int8.
+/// Parses a signed eight-bit value from -128 through 127.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. The full
+/// digit prefix must fit the signed range before the result is narrowed.
 pub impl Parse for Int8 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -49,7 +53,9 @@ pub impl Parse for Int8 with fn parse_decimal(
 }
 
 ///|
-/// Implements sign-free negative decimal parsing for Int8.
+/// Parses sign-free digits as a value from -128 through zero.
+/// With `prefix=true`, consumption ends at the first non-digit. Leading
+/// zeroes are accepted, and a magnitude above 128 raises `Overflow`.
 pub impl ParseNeg for Int8 with fn parse_negative_decimal(
   data : BytesView,
   prefix~ : Bool,
@@ -71,7 +77,9 @@ pub impl ParseNeg for Int8 with fn parse_negative_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for UInt16.
+/// Parses an unsigned sixteen-bit value from zero through 65535.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. Leading
+/// zeroes count toward consumption and are accepted in either zero mode.
 pub impl Parse for UInt16 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -96,7 +104,9 @@ pub impl Parse for UInt16 with fn parse_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for Int16.
+/// Parses a signed sixteen-bit value from -32768 through 32767.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. The full
+/// digit prefix must fit the signed range before the result is narrowed.
 pub impl Parse for Int16 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -121,7 +131,9 @@ pub impl Parse for Int16 with fn parse_decimal(
 }
 
 ///|
-/// Implements sign-free negative decimal parsing for Int16.
+/// Parses sign-free digits as a value from -32768 through zero.
+/// With `prefix=true`, consumption ends at the first non-digit. Leading
+/// zeroes are accepted, and a magnitude above 32768 raises `Overflow`.
 pub impl ParseNeg for Int16 with fn parse_negative_decimal(
   data : BytesView,
   prefix~ : Bool,
@@ -143,7 +155,9 @@ pub impl ParseNeg for Int16 with fn parse_negative_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for UInt.
+/// Parses an unsigned thirty-two-bit value from zero through 4294967295.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. Leading
+/// zeroes count toward consumption and are accepted in either zero mode.
 pub impl Parse for UInt32 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -168,7 +182,9 @@ pub impl Parse for UInt32 with fn parse_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for Int.
+/// Parses a signed thirty-two-bit value from -2147483648 through 2147483647.
+/// Follows the sign and prefix rules in `Parse::parse_decimal`. The full
+/// digit prefix must fit the signed range before the result is narrowed.
 pub impl Parse for Int32 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -193,7 +209,9 @@ pub impl Parse for Int32 with fn parse_decimal(
 }
 
 ///|
-/// Implements sign-free negative decimal parsing for Int.
+/// Parses sign-free digits as a value from -2147483648 through zero.
+/// With `prefix=true`, consumption ends at the first non-digit. Leading
+/// zeroes are accepted, and larger magnitudes raise `Overflow`.
 pub impl ParseNeg for Int32 with fn parse_negative_decimal(
   data : BytesView,
   prefix~ : Bool,

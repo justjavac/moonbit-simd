@@ -18,8 +18,8 @@ pub fn UInt128::from_words(high~ : UInt64, low~ : UInt64) -> UInt128 {
 }
 
 ///|
-/// Returns `(high, low)` in decreasing significance, without changing the value.
-/// This exposes exact bits rather than a lossy floating-point conversion.
+/// Returns the exact words in `(high, low)` order. The original value is
+/// `high * 2^64 + low`. Pass the two words to `from_words` to reconstruct it.
 pub fn UInt128::to_words(self : UInt128) -> (UInt64, UInt64) {
   (self.high, self.low)
 }
@@ -62,7 +62,8 @@ pub fn Int128::from_bits(bits : UInt128) -> Int128 {
 
 ///|
 /// Returns the exact two's-complement bit pattern as an immutable `UInt128`.
-/// Negative values retain their sign bit; this is not an absolute magnitude.
+/// Its top bit is set for a negative value. Pass the result to `from_bits`
+/// to recover the original signed value.
 pub fn Int128::to_bits(self : Int128) -> UInt128 {
   self.bits
 }

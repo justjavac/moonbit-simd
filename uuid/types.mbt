@@ -1,13 +1,13 @@
 ///|
-/// Selects UUID parsing and formatting implementations.
-///
-/// `Scalar` always uses the portable scalar implementation. `Simd` requests
-/// V128 operations on native and linear-memory Wasm and falls back to scalar
-/// on Wasm GC and JavaScript. `Auto` selects the measured backend default.
+/// Selects UUID parsing and formatting implementations. All choices have
+/// the same accepted input, output, and error semantics.
 #derive(Eq, Debug)
 pub(all) enum Algorithm {
+  /// Uses vectors on linear-memory Wasm and scalar code on other backends.
   Auto
+  /// Uses the scalar implementation on every backend.
   Scalar
+  /// Uses vectors on native and linear-memory Wasm and scalar fallback elsewhere.
   Simd
 }
 
@@ -17,21 +17,25 @@ pub(all) enum Algorithm {
 /// Parsing accepts either case independently of this formatting option.
 #derive(Eq, Debug)
 pub(all) enum AsciiCase {
+  /// Writes hexadecimal letters as ASCII `a..f`. This is the default.
   Lower
+  /// Writes hexadecimal letters as ASCII `A..F`.
   Upper
 }
 
 ///|
 /// Reports invalid UUID text, binary lengths, or destination buffer ranges.
 ///
-/// `InvalidUuid` covers length, wrappers, hyphen placement, and hexadecimal
-/// syntax, matching upstream's opaque parsing error. `InvalidByteLength`
-/// reports a binary input that is not exactly sixteen bytes. `InvalidBuffer`
-/// reports an output range that cannot fit; the destination remains unchanged.
+/// Text parsers report a single syntax error for malformed UUIDs. Binary
+/// conversion and destination writes provide the lengths involved.
 #derive(Eq, Debug)
 pub(all) suberror UuidError {
+  /// Invalid UUID text length, wrapper, hyphen placement, or hexadecimal digit.
   InvalidUuid
+  /// Binary input length in bytes when it differs from the required 16.
   InvalidByteLength(Int32)
+  /// The requested byte offset and write size do not fit the destination length.
+  /// The write fails before it mutates the destination.
   InvalidBuffer(offset~ : Int32, required~ : Int32, length~ : Int32)
 }
 
@@ -71,6 +75,15 @@ pub fn Uuid::from_bytes(input : BytesView) -> Uuid raise UuidError {
 /// The result owns its immutable storage and shares no mutable destination
 /// buffer. Windows GUID field endianness is not applied. This method cannot
 /// fail and has the same byte order on every backend.
+///
+/// ```mbt check
+/// test {
+///   let pattern = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+///   let uuid = @uuid.Uuid::from_bytes(pattern)
+///   assert_eq(uuid.to_bytes(), pattern)
+///   assert_eq(uuid.format_simple(), "000102030405060708090a0b0c0d0e0f")
+/// }
+/// ```
 pub fn Uuid::to_bytes(self : Uuid) -> Bytes {
   Bytes::makei(16, i => {
     let word = if i < 8 { self.high } else { self.low }

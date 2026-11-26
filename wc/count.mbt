@@ -1,21 +1,25 @@
 ///|
-/// Read-only totals for a byte sequence. `lines` counts LF bytes, `words`
-/// counts runs of bytes separated by ASCII whitespace, and `bytes` is the
-/// length. All three totals are zero for empty input.
+/// Read-only totals returned by `count()` or snapshotted by `Counter::counts()`.
+/// Fields are independent `UInt64` counts. All three are zero for empty input.
 #derive(Eq, Debug)
 pub struct Counts {
+  /// Number of LF bytes (`0x0A`). A CRLF sequence contributes one.
   lines : UInt64
+  /// Number of runs separated by space or bytes `0x09..0x0D`.
   words : UInt64
+  /// Number of bytes supplied in the view or across all stream updates.
   bytes : UInt64
 }
 
 ///|
 /// Counts LF bytes, ASCII-delimited words, and bytes in `data` without copying
-/// the view or requiring valid text. A final word counts without a trailing
-/// separator. Returns zero totals for an empty view.
+/// the view. Any byte outside ASCII space and `0x09..0x0D` is part of a word,
+/// including embedded NUL and high-bit bytes. An unterminated final word
+/// counts once, and the empty view returns three zeros.
 ///
-/// `simd=true` requests vectors on native and Wasm when a complete 16-byte
-/// block is present. Short inputs, Wasm GC, and JavaScript use scalar code.
+/// The default `simd=true` requests vectors on native and linear-memory Wasm
+/// for views containing at least 16 bytes. Shorter views, Wasm GC, JavaScript,
+/// and an explicit `simd=false` use the scalar implementation.
 pub fn count(data : BytesView, simd~ : Bool = true) -> Counts {
   let (lines, words, _) = scan(data, 1, simd)
   {

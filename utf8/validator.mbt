@@ -12,10 +12,11 @@ struct Validator {
 }
 
 ///|
-/// Creates an empty validator; empty input finalizes successfully.
-/// `simd=true` requests vector validation of complete portions of updates of at
-/// least 64 bytes on native/Wasm. Sequence fragments and shorter updates use
-/// scalar state transitions; Wasm GC and JS always use the scalar fallback.
+/// Creates an independent validator with no pending continuation bytes or
+/// errors. It finalizes successfully on empty input.
+/// The default `simd=true` requests vector validation of complete portions
+/// of updates of at least 64 bytes on native and linear-memory Wasm.
+/// Sequence fragments, shorter updates, Wasm GC, and JS use scalar transitions.
 pub fn Validator::new(simd~ : Bool = true) -> Validator {
   { simd, remaining: 0, lower: 0x80, upper: 0xBF, failed: false, }
 }
@@ -86,6 +87,16 @@ pub fn Validator::update(self : Validator, data : BytesView) -> Unit {
 /// This observes state without consuming or resetting it. Repeated calls agree;
 /// after an incomplete result, supplying the missing continuation can make a
 /// later result true. A malformed sequence remains false until `reset()`.
+///
+/// ```mbt check
+/// test {
+///   let validator = @utf8.Validator::new()
+///   validator.update(b"\xE2\x9D")
+///   assert_eq(validator.finalize(), false)
+///   validator.update(b"\xA4")
+///   assert_eq(validator.finalize(), true)
+/// }
+/// ```
 pub fn Validator::finalize(self : Validator) -> Bool {
   !self.failed && self.remaining == 0
 }

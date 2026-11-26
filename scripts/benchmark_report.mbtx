@@ -3274,6 +3274,11 @@ fn validate_bytecount_inventory(summaries : Array[Json]) -> Unit raise {
 ///|
 /// Verifies the upstream pin, the memchr API adapter, and the measurement metadata.
 fn validate_bytecount_record(record : Json) -> Unit raise {
+  let comparisons = array(record, "comparison_dependencies")
+  guard comparisons is [memchr] else {
+    fail("Expected one bytecount comparison")
+  }
+  let version = text(memchr, "version")
   guard field(record, "ported_upstream") ==
     {
       "package": "bytecount",
@@ -3283,12 +3288,15 @@ fn validate_bytecount_record(record : Json) -> Unit raise {
       "license": "MIT",
       "timed": false,
     } &&
-    array(record, "comparison_dependencies") ==
+    ["0.1.0", "0.1.1"].contains(version) &&
+    text(record, "comparison_manifest").find("justjavac/memchr@" + version)
+    is Some(_) &&
+    comparisons ==
     [
       {
         "label": "memchr",
         "package": "justjavac/memchr",
-        "version": "0.1.0",
+        "version": version,
         "license": "MIT",
         "api": "memchr_iter(needle, data).count() on the same view",
       },
@@ -3663,6 +3671,7 @@ fn argminmax_workload_metadata() -> Json {
 ///|
 /// Verifies pinned source provenance and the development-only linear baseline.
 fn validate_argminmax_metadata(record : Json) -> Unit raise {
+  let comparison_manifest = text(record, "comparison_manifest")
   if text(record, "source") == "github-actions" {
     let repository = text(record, "repository").split("/").to_array()
     guard repository is [owner, project] &&
@@ -3682,8 +3691,9 @@ fn validate_argminmax_metadata(record : Json) -> Unit raise {
     field(upstream, "timed") == Json::boolean(false) &&
     field(record, "workload_metadata") == argminmax_workload_metadata() &&
     text(record, "module_manifest").has_prefix("name = \"justjavac/argminmax\"") &&
-    text(record, "comparison_manifest").find("justjavac/argminmax@0.1.0")
-    is Some(_) else {
+    ["0.1.0", "0.1.1"].any(version => {
+      comparison_manifest.find("justjavac/argminmax@" + version) is Some(_)
+    }) else {
     fail("Missing or changed argminmax source or workload provenance")
   }
   let dependencies = array(record, "comparison_dependencies")

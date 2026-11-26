@@ -10,7 +10,8 @@ struct SearchParams {
 }
 
 ///|
-/// Creates an empty ordered parameter list without parsing a query.
+/// Creates an independent parameter list with size zero and empty
+/// serialization. Use `append` to add already decoded names and values.
 pub fn SearchParams::new() -> SearchParams {
   { pairs: [], }
 }
@@ -18,7 +19,9 @@ pub fn SearchParams::new() -> SearchParams {
 ///|
 /// Parses a query or form body, accepting one optional leading question mark.
 /// Empty ampersand-separated fields are skipped. Missing equals signs produce
-/// empty values; invalid percent escapes remain literal. Parsing never raises.
+/// empty values. Plus decodes to space and percent escapes are decoded as
+/// UTF-8 with replacement for malformed sequences. Invalid percent escapes
+/// remain literal. The returned mutable list owns its decoded pairs.
 pub fn SearchParams::parse(input : StringView) -> SearchParams {
   let body = input.strip_prefix("?").unwrap_or(input)
   let pairs : Array[(String, String)] = []
@@ -47,6 +50,7 @@ fn scalar_string(input : StringView) -> String {
 ///|
 /// Creates a parameter list from decoded pairs, preserving duplicates and order.
 /// Copies the list and replaces unpaired UTF-16 surrogates in names and values.
+/// Literal plus and percent signs are stored as data, ready for serialization.
 pub fn SearchParams::from_pairs(
   pairs : ArrayView[(String, String)],
 ) -> SearchParams {
@@ -54,27 +58,32 @@ pub fn SearchParams::from_pairs(
 }
 
 ///|
-/// Copies the ordered list so later changes affect only their receiver.
-/// Immutable name/value strings may be shared safely.
+/// Copies the ordered list into an independent mutable object. Each receiver
+/// can be appended to, reordered, or reset independently. Immutable names
+/// and values may share their string storage.
 pub fn SearchParams::copy(self : SearchParams) -> SearchParams {
   { pairs: self.pairs.copy(), }
 }
 
 ///|
-/// Replaces all pairs by parsing a query with the same rules as parse().
+/// Replaces all existing pairs with the result of `parse(input)`.
+/// Empty input clears the list. References that alias `self` observe the
+/// replacement, while copies and existing iterators retain their snapshots.
 pub fn SearchParams::reset(self : SearchParams, input : StringView) -> Unit {
   self.pairs = SearchParams::parse(input).pairs
 }
 
 ///|
-/// Returns the number of pairs, including repeated names and empty values.
+/// Returns the number of name-value pairs as an `Int32`. Every occurrence
+/// of a repeated name counts separately, including pairs with an empty value.
 pub fn SearchParams::size(self : SearchParams) -> Int32 {
   self.pairs.length()
 }
 
 ///|
 /// Appends one decoded pair at the end, preserving existing pairs.
-/// Names and values use USVString replacement; encoding happens at serialization.
+/// Empty names and values are valid. Unpaired surrogates become U+FFFD and
+/// form encoding happens at serialization. Aliases observe the append.
 pub fn SearchParams::append(
   self : SearchParams,
   name : StringView,
@@ -86,6 +95,8 @@ pub fn SearchParams::append(
 ///|
 /// Replaces the first matching name's value and removes later matching pairs.
 /// If the name is absent, appends it. Other pairs retain their order.
+/// Matching uses case-sensitive decoded names after surrogate replacement.
+/// Aliases observe the replacement and removal.
 pub fn SearchParams::set(
   self : SearchParams,
   name : StringView,
@@ -113,7 +124,9 @@ pub fn SearchParams::set(
 
 ///|
 /// Removes every matching name, optionally restricted to an exact decoded value.
-/// Retained pairs keep their order; removing an absent pair has no effect.
+/// Omitting `value` removes every occurrence of `name`. Supplying `value=""`
+/// restricts deletion to pairs with an empty value. Retained pairs keep their
+/// order and aliases observe changes.
 pub fn SearchParams::delete(
   self : SearchParams,
   name : StringView,
@@ -127,7 +140,18 @@ pub fn SearchParams::delete(
 }
 
 ///|
-/// Returns the first matching decoded value or None, preserving Some("").
+/// Returns the first case-sensitive match for the decoded name.
+/// `None` means the name is absent, and `Some("")` represents an empty
+/// value. The returned string can be retained independently of later edits.
+///
+/// ```mbt check
+/// test {
+///   let params = @url.SearchParams::parse("?x=&x=more+y")
+///   assert_eq(params.get("x"), Some(""))
+///   assert_eq(params.get_all("x"), ["", "more y"])
+///   assert_eq(params.get("missing"), None)
+/// }
+/// ```
 pub fn SearchParams::get(self : SearchParams, name : StringView) -> String? {
   let key = scalar_string(name)
   for pair in self.pairs {
@@ -139,7 +163,9 @@ pub fn SearchParams::get(self : SearchParams, name : StringView) -> String? {
 }
 
 ///|
-/// Returns all matching decoded values in insertion order as an independent array.
+/// Returns an independent array of all values matching `name` in their
+/// current order. A name that is absent yields an empty array. Repeated
+/// values and empty strings are preserved.
 pub fn SearchParams::get_all(
   self : SearchParams,
   name : StringView,
@@ -151,6 +177,8 @@ pub fn SearchParams::get_all(
 ///|
 /// Reports whether a name is present, optionally matching an exact decoded value.
 /// Empty names/values are valid and comparisons are case sensitive.
+/// Omitting `value` matches any value for the name. An explicit empty value
+/// matches only pairs whose value is empty.
 pub fn SearchParams::has(
   self : SearchParams,
   name : StringView,
@@ -176,7 +204,8 @@ fn compare_names(a : String, b : String) -> Int32 {
 
 ///|
 /// Sorts by name in ascending UTF-16 code-unit order, stably for duplicate names.
-/// Values do not contribute to the ordering and remain paired with their names.
+/// Values stay paired with their names. Shared references observe the new
+/// order and existing snapshot iterators continue in their original order.
 pub fn SearchParams::sort(self : SearchParams) -> Unit {
   let indexed = self.pairs.mapi((i, pair) => (i, pair))
   indexed.sort_by((a, b) => {
@@ -198,13 +227,16 @@ pub fn SearchParams::entries(self : SearchParams) -> Iter[(String, String)] {
 }
 
 ///|
-/// Iterates an independent snapshot of names, including duplicates.
+/// Iterates decoded names in their current order, including duplicates and
+/// empty names. The iterator snapshots the list at construction and stays
+/// usable across later edits.
 pub fn SearchParams::keys(self : SearchParams) -> Iter[String] {
   self.entries().map(pair => pair.0)
 }
 
 ///|
-/// Iterates an independent snapshot of values, including empty strings.
+/// Iterates decoded values in their current order, including duplicates and
+/// empty strings. The iterator owns a snapshot of the pairs at construction.
 pub fn SearchParams::values(self : SearchParams) -> Iter[String] {
   self.entries().map(pair => pair.1)
 }
@@ -221,14 +253,16 @@ pub fn SearchParams::to_string(self : SearchParams) -> String {
 
 ///|
 /// Returns a detached, independently mutable decoded copy of this URL's query.
-/// Changing these parameters does not change the URL until set_search_params().
+/// Both absent and empty queries produce an empty list. Apply edits back
+/// to the URL using `set_search_params`.
 pub fn Url::search_params(self : Url) -> SearchParams {
   SearchParams::parse(self.query().unwrap_or(""))
 }
 
 ///|
 /// Replaces the URL query with the list's form-urlencoded serialization.
-/// An empty list removes the query. The list remains independent of the URL.
+/// An empty list removes the query. The URL retains only the serialized
+/// snapshot, so subsequent mutations of `params` are independent.
 pub fn Url::set_search_params(self : Url, params : SearchParams) -> Unit {
   self.set_search(params.to_string())
 }

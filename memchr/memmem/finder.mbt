@@ -1,11 +1,13 @@
 ///|
 /// Controls candidate filtering before exact Two-Way verification.
-/// `Auto` uses a ranked byte pair with at most fifty filter calls per search;
-/// `None` uses Two-Way alone. This never changes match semantics. Vector filtering
-/// additionally requires `simd=true` and native/linear-memory Wasm support.
+/// Both policies return the same byte offsets. Vector filtering requires
+/// `simd=true` on native or linear-memory Wasm.
 #derive(Eq, Debug)
 pub(all) enum Prefilter {
+  /// Uses a ranked byte pair for eligible needles, with a budget of at most
+  /// fifty filter calls per search. Two-Way completes the search on exhaustion.
   Auto
+  /// Uses exact Two-Way verification directly for multi-byte needles.
   None
 }
 
@@ -23,9 +25,10 @@ pub struct Finder {
 
 ///|
 /// Preprocesses arbitrary `needle` bytes without copying their immutable storage.
-/// An empty needle matches every byte boundary, including the end. `simd`
-/// requests bounded native/Wasm vectors or scalar fallback. `prefilter=None`
-/// disables ranked candidate filtering; both choices preserve exact results.
+/// An empty needle matches every byte boundary, including the end.
+/// The default options are `simd=true` and `prefilter=Auto`. Vector-capable
+/// native and linear-memory Wasm can accelerate eligible candidate filters.
+/// `prefilter=None` uses Two-Way directly for multi-byte needles.
 /// Retaining a partial view can keep its backing buffer alive; use
 /// `needle.to_owned()` before construction to materialize just that view.
 pub fn Finder::new(
@@ -102,8 +105,9 @@ pub fn FinderRev::rfind(self : FinderRev, haystack : BytesView) -> Int32? {
 }
 
 ///|
-/// Returns the immutable original needle view without consuming the finder.
-/// This safely retains the exact supplied bytes and their backing storage.
+/// Returns the exact original immutable needle view, including empty views,
+/// NUL, and high-bit bytes. It shares the backing storage retained during
+/// construction and can be kept independently of the finder.
 pub fn FinderRev::needle(self : FinderRev) -> BytesView {
   self.pattern
 }

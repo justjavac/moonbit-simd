@@ -55,6 +55,12 @@ pub fn forgiving_decode(
 /// `forgiving_decode`. Every non-ASCII UTF-16 code unit is rejected, and the
 /// input and retained views are unchanged. Empty or all-whitespace input
 /// returns empty bytes.
+///
+/// ```mbt check
+/// test {
+///   assert_eq(@base64.forgiving_decode_string(" Z h ==\n"), b"f")
+/// }
+/// ```
 pub fn forgiving_decode_string(
   input : StringView,
   simd~ : Bool = default_simd,
@@ -65,11 +71,14 @@ pub fn forgiving_decode_string(
 ///|
 /// Writes forgiving-decoded bytes at `offset` and returns the number written.
 ///
-/// Normalizes whitespace into temporary storage when present. Capacity is
-/// checked against the exact decoded size, relaxing upstream's requirement
-/// that the destination hold the entire encoded input. `OutputTooSmall` occurs
-/// before writes. Later `InvalidInput` can leave a partially written prefix;
-/// on success, bytes outside the written range are unchanged. Input is immutable.
+/// The default offset is zero. Normalizes whitespace into temporary storage
+/// when present, then checks `output` capacity against the exact decoded size.
+/// A negative offset or an output range beyond the buffer raises
+/// `OutputTooSmall` before any writes. Check `forgiving_decode` for accepted
+/// syntax and the default SIMD policy.
+///
+/// On success, the return value is the number of bytes in the written range.
+/// A later alphabet error can leave a partially written prefix.
 pub fn forgiving_decode_into(
   input : BytesView,
   output : FixedArray[Byte],

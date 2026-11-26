@@ -35,10 +35,10 @@ struct Hasher {
 ///|
 /// Computes the standard IEEE CRC-32 checksum of `data` in one call.
 ///
-/// The result is a finalized 32-bit unsigned checksum, with zero for empty
-/// input. `data` is a read-only byte view; passing `Bytes` or a subview avoids
-/// copying the input. The input is interpreted as bytes, without text encoding
-/// or host-endian conversion. Backend selection does not change the result.
+/// The result is a finalized 32-bit unsigned CRC-32/ISO-HDLC checksum, with
+/// reflected polynomial `0xEDB88320` and initial and final XOR `0xFFFFFFFF`.
+/// Empty input returns zero. `data` is borrowed as raw bytes and may be a
+/// subview at any byte offset. The result is identical across backends.
 /// `simd=false` uses slicing-by-eight; `simd=true` requests experimental
 /// slicing-by-sixteen with vector operations on `native` and `wasm`, falling
 /// back to scalar processing on `wasm-gc`, `js`, and inputs shorter than
@@ -145,7 +145,8 @@ pub fn Hasher::new_with_initial_len(
 /// Updates the checksum and adds `data.length()` to the byte count. Empty
 /// input is a no-op. Reads the input view without retaining, copying, or
 /// changing it. Different chunk boundaries produce the same final checksum.
-/// Panics before mutation if the total length would exceed `2^64 - 1` bytes.
+/// All aliases observe a successful update. Panics before mutation if the
+/// total length would exceed `2^64 - 1` bytes.
 pub fn Hasher::update(self : Hasher, data : BytesView) -> Unit {
   let amount = checked_length(self.amount, data.length().to_uint64())
   self.checksum = update(self.checksum, data, simd=self.use_simd)
@@ -215,7 +216,8 @@ pub fn Hasher::copy(self : Hasher) -> Hasher {
 /// and count become those of the concatenation; `other` is unchanged unless it
 /// is the same mutable object as `self`, in which case the sequence is doubled.
 /// A suffix with zero length is ignored, even if it has a nonzero checksum.
-/// Panics before mutation if the combined count would exceed `2^64 - 1` bytes.
+/// Later updates use `self`'s existing SIMD preference. Panics before mutation
+/// if the combined count would exceed `2^64 - 1` bytes.
 ///
 /// ```mbt check
 /// test {

@@ -5,9 +5,10 @@
 /// least-significant first. Length calculations use `Int64` to avoid overflow.
 #derive(Eq, Debug)
 pub(all) suberror BitmapError {
-  /// The requested bit offset was negative.
+  /// Carries the requested bit offset when it is negative.
   InvalidOffset(Int32)
-  /// The bitmap view has fewer than the required number of bits.
+  /// The bitmap view has fewer than `offset + data.length()` bits.
+  /// Both lengths are counts in bits measured from the bitmap view's start.
   InsufficientBits(required~ : Int64, available~ : Int64)
 }
 
@@ -203,8 +204,8 @@ fn[T : Element] masked_find(
 ///|
 /// Returns extrema indices while skipping nulls marked by an Arrow bitmap.
 /// Element `i` is valid iff bit `offset + i` of `validity` is set; the least
-/// significant bit comes first. `offset` is relative to the bitmap view and
-/// independent of the data view's start. Results retain original data-view
+/// significant bit comes first. `offset` defaults to zero and is relative
+/// to the bitmap view. Results retain original data-view
 /// indices; first ties and NaN ignoring match `argminmax`. No valid elements
 /// returns `None`; all valid elements NaN returns their first valid index twice.
 /// Negative offsets or insufficient bitmap bits raise `BitmapError`, including
@@ -218,6 +219,10 @@ fn[T : Element] masked_find(
 /// ```mbt check
 /// test {
 ///   assert_eq(@argminmax.argminmax_masked([-5, 3, 9, 4], b"\x06"), Some((1, 2)))
+///   assert_eq(
+///     @argminmax.argminmax_masked([-5, 3, 9, 4], b"\x0C", offset=1),
+///     Some((1, 2)),
+///   )
 /// }
 /// ```
 pub fn[T : Element] argminmax_masked(

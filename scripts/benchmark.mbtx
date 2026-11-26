@@ -1109,7 +1109,7 @@ async fn main {
           {
             "label": "memchr",
             "package": "justjavac/memchr",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "license": "MIT",
             "api": "memchr_iter(needle, data).count() on the same view",
           },

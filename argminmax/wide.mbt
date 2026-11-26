@@ -26,13 +26,15 @@ pub fn Int8::from_bits(bits : Byte) -> Int8 {
 }
 
 ///|
-/// Returns the original two's-complement bits without conversion or mutation.
+/// Returns the original two's-complement byte. The high bit is set for
+/// negative values. Pass the byte to `from_bits` to reconstruct the value.
 pub fn Int8::to_bits(self : Int8) -> Byte {
   self.bits
 }
 
 ///|
-/// Returns this value as an exact signed `Int` in -128 through 127.
+/// Sign-extends the stored bits to an exact `Int32` in -128 through 127.
+/// For example, the bit pattern `0xFF` yields -1.
 pub fn Int8::to_int(self : Int8) -> Int32 {
   let value = self.bits.to_int()
   if value >= 128 {
@@ -43,7 +45,9 @@ pub fn Int8::to_int(self : Int8) -> Int32 {
 }
 
 ///|
-/// Compares signed eight-bit values using their numeric order.
+/// Compares sign-extended numeric values, returning a negative, zero, or
+/// positive value according to their order. `0xFF` represents -1 and
+/// therefore sorts before the byte encoding of zero.
 pub impl Compare for Int8 with fn compare(self, other) {
   self.to_int().compare(other.to_int())
 }
@@ -67,25 +71,30 @@ pub fn UInt128::from_words(high~ : UInt64, low~ : UInt64) -> UInt128 {
 }
 
 ///|
-/// Widens `value` exactly to 128 bits with a zero high word.
+/// Widens `value` exactly to 128 bits with a zero high word and the supplied
+/// `UInt64` as the low word. Every `UInt64` is representable on all backends.
 pub fn UInt128::from_uint64(value : UInt64) -> UInt128 {
   UInt128::from_words(high=0UL, low=value)
 }
 
 ///|
-/// Returns the most significant 64 bits without changing this value.
+/// Returns the unsigned most significant word. It contributes
+/// `high() * 2^64` to the represented integer.
 pub fn UInt128::high(self : UInt128) -> UInt64 {
   self.high_word
 }
 
 ///|
-/// Returns the least significant 64 bits without changing this value.
+/// Returns the unsigned least significant word, equal to the represented
+/// integer modulo `2^64`.
 pub fn UInt128::low(self : UInt128) -> UInt64 {
   self.low_word
 }
 
 ///|
-/// Orders unsigned 128-bit integers lexicographically by high and low words.
+/// Compares unsigned high words first and unsigned low words on a tie.
+/// The sign of the returned comparison describes the exact unsigned
+/// 128-bit order on all backends.
 pub impl Compare for UInt128 with fn compare(self, other) {
   let high = self.high_word.compare(other.high_word)
   if high == 0 {
@@ -115,7 +124,9 @@ pub fn Int128::from_words(high~ : Int64, low~ : UInt64) -> Int128 {
 }
 
 ///|
-/// Sign-extends `value` exactly to an immutable 128-bit integer.
+/// Sign-extends `value` exactly to an immutable 128-bit integer. Negative
+/// values get high word -1, and other values get high word zero. The low
+/// word contains the original 64-bit pattern.
 pub fn Int128::from_int64(value : Int64) -> Int128 {
   Int128::from_words(
     high=if value < 0L { -1L } else { 0L },
@@ -124,19 +135,23 @@ pub fn Int128::from_int64(value : Int64) -> Int128 {
 }
 
 ///|
-/// Returns the signed most significant word without changing this value.
+/// Returns the signed most significant word, which carries the sign and
+/// contributes `high() * 2^64` to the represented integer.
 pub fn Int128::high(self : Int128) -> Int64 {
   self.high_word
 }
 
 ///|
-/// Returns the unsigned least significant word without changing this value.
+/// Returns the unsigned least significant word, including for negative
+/// values. Combine it with the signed high word to reconstruct the value.
 pub fn Int128::low(self : Int128) -> UInt64 {
   self.low_word
 }
 
 ///|
-/// Compares signed high words first, then unsigned low words when equal.
+/// Compares signed high words first and unsigned low words on a tie.
+/// The sign of the returned comparison describes the exact signed
+/// 128-bit order on all backends.
 pub impl Compare for Int128 with fn compare(self, other) {
   let high = self.high_word.compare(other.high_word)
   if high == 0 {
@@ -147,9 +162,13 @@ pub impl Compare for Int128 with fn compare(self, other) {
 }
 
 ///|
-/// Uses the default exact scalar search for unsigned 128-bit elements.
+/// Implements `Element` for the full unsigned 128-bit range. Searches
+/// compare both words exactly in the scalar loop on every backend, including
+/// with an explicit SIMD request. Empty input and first ties follow `Element`.
 pub impl Element for UInt128
 
 ///|
-/// Uses the default exact scalar search for signed 128-bit elements.
+/// Implements `Element` for the full signed 128-bit range. Searches
+/// preserve signed order in the scalar loop on every backend, including
+/// with an explicit SIMD request. Empty input and first ties follow `Element`.
 pub impl Element for Int128

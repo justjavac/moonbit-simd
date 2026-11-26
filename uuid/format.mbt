@@ -75,13 +75,15 @@ pub fn Uuid::write_hyphenated(
 }
 
 ///|
-/// Displays a UUID in lowercase hyphenated form.
+/// Writes the canonical lowercase ASCII representation with hyphens at
+/// offsets 8, 13, 18, and 23 to the supplied logger.
 pub impl Show for Uuid with fn output(self, logger) {
   logger.write_string(self.format_hyphenated())
 }
 
 ///|
-/// Makes the canonical display operation available through ordinary method syntax.
+/// Exposes `to_string()` as a method returning the canonical 36-character
+/// lowercase hyphenated representation.
 pub extend Uuid with Show::{to_string}
 
 ///|
