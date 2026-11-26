@@ -162,3 +162,19 @@ Run `moon -C benchmarks test argminmax --target all`, then
 its companion JSON. Select `argminmax` in the Benchmarks workflow to measure
 all three systems and four backends in one run. Explicit local rendering uses
 `moon run scripts/benchmark_report.mbtx --local argminmax _build/benchmarks/argminmax/windows.json _build/argminmax-report`.
+
+## Word counts
+
+The [word-count adapters](wc) compare scalar and SIMD requests with an
+independent scalar implementation over the same six workloads. Four one-shot
+workloads cover short text, offset views, and binary bytes. Two streaming
+workloads use prepared 63-byte and 8 KiB chunks. Each adapter checks its LF,
+word, and byte totals before timing. Streaming measurements include creating
+the public counter, updating it, and reading the totals.
+
+Run `moon -C benchmarks test wc --target all` and
+`moon run scripts/benchmark.mbtx wc`. `WC_BENCHMARK_REVERSE=1` reverses
+implementation order and saves a distinct local artifact. Render a local run
+with `moon run scripts/benchmark_report.mbtx --local wc _build/benchmarks/wc/linux.json _build/wc-report`.
+The [word-count benchmark report](../wc/BENCHMARK.md) summarizes the selected CI
+snapshot.

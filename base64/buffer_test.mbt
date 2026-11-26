@@ -118,7 +118,7 @@ test "append operations preserve prefixes and decode failure is atomic" {
     @base64.standard.encode_append(b"helloworld", encoded, simd~)
     assert_eq(encoded.to_string(), "data:;base64,aGVsbG93b3JsZA==")
     let decoded = @buffer.Buffer()
-    decoded.write_bytes(b"123")
+    decoded.write_bytesview(b"123")
     @base64.standard.decode_append(b"aGVsbG93b3JsZA==", decoded, simd~)
     assert_eq(decoded.to_bytes(), b"123helloworld")
     let shared = decoded

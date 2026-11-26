@@ -24,6 +24,7 @@ for installation, APIs, and examples; [moon.work](moon.work) links local sources
 | [justjavac/uuid](uuid/README.md) | UUID parsing, formatting, reusable buffers | [Results](uuid/BENCHMARK.md) |
 | [justjavac/ryu](ryu/README.md) | Float formatting and experimental decimal parsing | [Results](ryu/BENCHMARK.md) |
 | [justjavac/memchr](memchr/README.md) | Byte and substring search, finders, iteration | [Results](memchr/BENCHMARK.md) |
+| [justjavac/wc](wc/README.md) | LF, ASCII-delimited words, and byte counts with streaming | [Results](wc/BENCHMARK.md) |
 
 ## Portability
 

@@ -8,7 +8,7 @@ repository = "https://github.com/justjavac/moonbit-simd"
 
 license = "MIT"
 
-description = "Development-only cross-library CRC32, WHATWG URL, UTF-8, Base64, decimal integer, extrema, UUID, Ryu, and byte-search benchmarks"
+description = "Development-only CRC32, WHATWG URL, UTF-8, Base64, decimal integer, extrema, UUID, Ryu, byte-search, and word-count benchmarks"
 
 preferred_target = "native"
 
@@ -35,6 +35,7 @@ import {
   "justjavac/uuid@0.1.0",
   "justjavac/ryu@0.1.0",
   "justjavac/memchr@0.1.0",
+  "justjavac/wc@0.1.0",
   "bobzhang/uuidm@0.2.0",
   "f4ah6o/uuidm@0.2.1",
   "moonbitstack/moonuuid@0.2.1",

@@ -1,0 +1,30 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/wc"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn count(BytesView, simd? : Bool) -> Counts
+
+// Errors
+
+// Types and methods
+type Counter
+pub fn Counter::copy(Self) -> Self
+pub fn Counter::counts(Self) -> Counts
+pub fn Counter::new(simd? : Bool) -> Self
+pub fn Counter::reset(Self) -> Unit
+pub fn Counter::update(Self, BytesView) -> Unit
+
+#derive(Eq, @debug.Debug)
+pub struct Counts {
+  lines : UInt64
+  words : UInt64
+  bytes : UInt64
+}
+
+// Type aliases
+
+// Traits

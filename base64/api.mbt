@@ -181,7 +181,7 @@ pub fn Base64::decode_append(
   output : @buffer.Buffer,
   simd~ : Bool = default_simd,
 ) -> Unit raise Base64Error {
-  output.write_bytes(self.decode(input, simd~))
+  output.write_bytesview(self.decode(input, simd~))
 }
 
 ///|

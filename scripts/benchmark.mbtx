@@ -808,6 +808,7 @@ async fn main {
   if arguments == [arguments[0], "--self-test"] {
     assert_eq(expected_ryu_names().length(), 85)
     assert_eq(expected_memchr_names().length(), 370)
+    wc_inventory_self_test()
     println("Benchmark collector inventory self-test passed")
     return
   }
@@ -828,6 +829,7 @@ async fn main {
   let selected_modules = if requested == ["all"] {
     [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
+      "wc",
     ]
   } else {
     requested
@@ -859,7 +861,11 @@ async fn main {
       fail("A module must be a direct workspace module directory")
     }
     let directory = "_build/benchmarks/\{package_dir}"
-    @fs.mkdir("\{directory}/\{os}", recursive=true, allow_existing=true)
+    let reversed = package_dir == "wc" &&
+      environment("WC_BENCHMARK_REVERSE") == "1"
+    let log_directory = "\{directory}/\{os}" +
+      (if reversed { "-reversed" } else { "" })
+    @fs.mkdir(log_directory, recursive=true, allow_existing=true)
     let backends : Array[Json] = []
     let selected = environment("BENCHMARK_BACKENDS")
     let targets = if selected == "" {
@@ -897,7 +903,9 @@ async fn main {
           "-C", "benchmarks", "bench", "--target", backend, "--release", "--no-parallelize",
           "-p", "justjavac/benchmarks/utf8",
         ]
-      } else if package_dir == "atoi" || package_dir == "argminmax" {
+      } else if package_dir == "atoi" ||
+        package_dir == "argminmax" ||
+        package_dir == "wc" {
         [
           "-C",
           "benchmarks",
@@ -928,8 +936,8 @@ async fn main {
       println("Benchmarking \{package_dir} on \{os}/\{backend}")
       let started = timestamp(os)
       // Direct file redirects retain partial diagnostics if the collector exits early.
-      let stdout_log = "\{directory}/\{os}/\{backend}-stdout.log"
-      let stderr_log = "\{directory}/\{os}/\{backend}-stderr.log"
+      let stdout_log = "\{log_directory}/\{backend}-stdout.log"
+      let stderr_log = "\{log_directory}/\{backend}-stderr.log"
       let exit_code = @shell.Cmd(
         "moon",
         command,
@@ -938,7 +946,7 @@ async fn main {
       ).status()
       let stdout = @fs.read_text(stdout_log)
       let stderr = @fs.read_text(stderr_log)
-      @fs.write_text("\{directory}/\{os}/\{backend}.log", stdout + stderr)
+      @fs.write_text("\{log_directory}/\{backend}.log", stdout + stderr)
       guard exit_code == 0 else {
         fail(
           "Benchmark failed for \{package_dir}/\{backend}; see the saved log",
@@ -950,6 +958,9 @@ async fn main {
       }
       if package_dir == "memchr" {
         validate_memchr_inventory(records)
+      }
+      if package_dir == "wc" {
+        annotate_wc(records)
       }
       if package_dir == "uuid" {
         validate_uuid_inventory(records)
@@ -1040,7 +1051,17 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "memchr" {
+      "comparison_dependencies": if package_dir == "wc" {
+        [
+          {
+            "label": "reference",
+            "package": "justjavac/benchmarks/wc",
+            "version": "0.1.0",
+            "license": "MIT",
+            "api": "Independent scalar scan counting word ends with explicit ASCII whitespace",
+          },
+        ]
+      } else if package_dir == "memchr" {
         [
           {
             "label": "core",
@@ -1246,7 +1267,15 @@ async fn main {
           },
         ]
       },
-      "ported_upstream": if package_dir == "memchr" {
+      "ported_upstream": if package_dir == "wc" {
+        {
+          "package": "fastlwc",
+          "repository": "https://github.com/expr-fi/fastlwc",
+          "revision": "b8d3a3839161d0487a25610d65a077d8431de1f0",
+          "license": "MIT",
+          "timed": false,
+        }
+      } else if package_dir == "memchr" {
         {
           "package": "memchr",
           "version": "2.8.3",
@@ -1284,7 +1313,18 @@ async fn main {
       } else {
         Json::null()
       },
-      "workload_metadata": if package_dir == "memchr" {
+      "workload_metadata": if package_dir == "wc" {
+        {
+          "cases_per_backend": 18,
+          "prepared": "Immutable repeated ASCII text or deterministic binary bytes, views, and streaming chunks",
+          "timed": "Public calls, streaming construction and snapshot, result adaptation, callback dispatch, and keep barriers",
+          "measurement_order": if reversed {
+            "reversed"
+          } else {
+            "forward"
+          },
+        }
+      } else if package_dir == "memchr" {
         memchr_workload_metadata()
       } else if package_dir == "argminmax" {
         {
@@ -1331,9 +1371,11 @@ async fn main {
       },
       "backends": Json(backends),
     }
-    let record_name = if package_dir == "memchr" &&
-      run_id == "" &&
-      targets.length() == 1 {
+    let record_name = if package_dir == "wc" && run_id == "" {
+      os +
+      (if targets.length() == 1 { "-" + targets[0] } else { "" }) +
+      (if reversed { "-reversed" } else { "" })
+    } else if package_dir == "memchr" && run_id == "" && targets.length() == 1 {
       os + "-" + targets[0]
     } else {
       os
@@ -1424,4 +1466,78 @@ fn validate_argminmax_inventory(records : Array[Json]) -> Unit raise {
     let _ = expected.remove(name)
   }
   guard expected.is_empty() else { fail("Missing extrema cases") }
+}
+
+///|
+/// Lists every word-count operation, view offset, and prepared chunk size.
+fn wc_inventory() -> Map[String, Json] {
+  let cases : Map[String, Json] = Map([])
+  for
+    (workload, bytes, offset, chunk) in [
+      ("short", 13, 0, 0),
+      ("offset", 33, 3, 0),
+      ("text", 4096, 0, 0),
+      ("binary", 65539, 1, 0),
+      ("stream63", 4096, 0, 63),
+      ("stream8k", 1048576, 0, 8192),
+    ] {
+    for implementation in ["reference", "own-scalar", "own-simd"] {
+      cases["\{workload}:\{implementation}:\{bytes}:\{offset}"] = {
+        "input_bytes": bytes,
+        "input_offset": offset,
+        "stream_chunk_bytes": chunk,
+      }
+    }
+  }
+  cases
+}
+
+///|
+/// Validates and records the exact word-count workload metadata.
+fn annotate_wc(records : Array[Json]) -> Unit raise {
+  let expected = wc_inventory()
+  guard records.length() == expected.length() else {
+    fail("Expected the complete 18-case word-count inventory")
+  }
+  for record in records {
+    guard record is Object(fields) &&
+      fields.get("name") is Some(String(name)) &&
+      expected.get(name) is Some(Object(metadata)) else {
+      fail("Unexpected or duplicate word-count benchmark")
+    }
+    expected.remove(name)
+    for (key, value) in metadata {
+      guard fields.get(key) is None || fields.get(key) == Some(value) else {
+        fail("Changed word-count metadata: " + name + "/" + key)
+      }
+      fields[key] = value
+    }
+  }
+}
+
+///|
+/// Requires the collector to reject invalid word-count inputs.
+fn wc_must_reject(action : () -> Unit raise) -> Unit raise {
+  try action() catch {
+    _ => ()
+  } noraise {
+    _ => fail("Invalid word-count inventory was accepted")
+  }
+}
+
+///|
+/// Verifies that the word-count collector rejects missing and substituted inputs.
+fn wc_inventory_self_test() -> Unit raise {
+  let cases : Array[Json] = []
+  for (name, _) in wc_inventory() {
+    cases.push({ "name": name })
+  }
+  assert_eq(cases.length(), 18)
+  annotate_wc(cases)
+  wc_must_reject(() => annotate_wc(cases[:17].to_owned()))
+  let changed = cases.copy()
+  changed[0] = { "name": "text:own-simd:4096:1" }
+  wc_must_reject(() => annotate_wc(changed))
+  changed[0] = cases[1]
+  wc_must_reject(() => annotate_wc(changed))
 }

@@ -1,0 +1,7 @@
+import {
+  "justjavac/wc",
+  "moonbitlang/core/bench",
+  "moonbitlang/core/env",
+} for "wbtest"
+
+supported_targets = "native + wasm + wasm-gc + js"

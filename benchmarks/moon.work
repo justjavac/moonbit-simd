@@ -10,4 +10,5 @@ members = [
   "../uuid",
   "../ryu",
   "../memchr",
+  "../wc",
 ]
