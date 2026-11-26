@@ -12,7 +12,8 @@ pub fn Base64::encode(
 ) -> Bytes {
   let output = FixedArray::make(self.encoded_length(input.length()), b'\x00')
   encode_dispatch(input, output, 0, self, simd)
-  Bytes::from_array(output[:])
+  // The result owns this fresh array, with no mutable alias retained.
+  output.unsafe_reinterpret_as_bytes()
 }
 
 ///|
@@ -203,5 +204,6 @@ fn decode_allocated(
   )
   let output = FixedArray::make(length, b'\x00')
   decode_dispatch(input, n, output, 0, config, forgiving, true, simd)
-  Bytes::from_array(output[:])
+  // The result owns this fresh array, with no mutable alias retained.
+  output.unsafe_reinterpret_as_bytes()
 }

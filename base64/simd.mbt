@@ -109,22 +109,15 @@ fn encode_simd(
   config : Base64,
 ) -> Unit {
   let shifts = encoding_shift(config.url_safe)
-  let source = Raw(input)
-  for i = 0; i <= input.length() - 16; i = i + 12 {
-    let block = source.load16(i)
-    @simd.v128_store(
-      output,
-      offset + i / 3 * 4,
-      encode_values(split_bits(block), shifts),
-    )
+  let source = input.data()
+  let start = input.start_offset()
+  let last = input.length() - 16
+  for i = 0, j = offset; i <= last; i = i + 12, j = j + 16 {
+    // The sixteen-byte load stays inside the view, including at unaligned offsets.
+    let block = source.unsafe_extract_v128_aligned(start + i)
+    @simd.v128_store(output, j, encode_values(split_bits(block), shifts))
   } nobreak {
-    encode_scalar(
-      input[i:],
-      output,
-      offset + i / 3 * 4,
-      config.charset(),
-      config.padding,
-    )
+    encode_scalar(input[i:], output, j, config)
   }
 }
 
@@ -176,7 +169,7 @@ fn decode_simd(
       length,
       output,
       offset + i / 4 * 3,
-      config.decode_table(),
+      config,
       forgiving,
       write,
     )
