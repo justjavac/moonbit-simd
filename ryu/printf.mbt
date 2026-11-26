@@ -2,10 +2,12 @@
 // Derived from Ryu under the Boost Software License 1.0; see LICENSE.
 
 ///|
-/// Reports precision values that cannot fit the portable output length contract.
+/// Reports an out-of-range precision before allocating formatted output.
+/// Both `d2fixed` and `d2exp` apply this check to finite and non-finite values.
 #derive(Debug, Eq)
 pub(all) suberror FormatError {
-  /// The requested fractional digit count is outside 0..2147483336.
+  /// Carries the supplied fractional digit count if it is below zero or
+  /// above 2147483336.
   InvalidPrecision(Int32)
 }
 
