@@ -1,5 +1,10 @@
 # Development benchmarks
 
+The [bytecount adapters](bytecount) compare dispatched and byte-wise counts
+on the same prepared views. The byte-match workload also measures
+`@memchr.memchr_iter(...).count()`, including cursor creation. See the
+[bytecount report](../bytecount/BENCHMARK.md) for workloads and commands.
+
 The [byte-search adapters](memchr) compare byte unions, both search directions,
 counts, and lazy iteration against independent per-byte references. Single-byte
 and substring searches also use bundled core `BytesView.find`/`rev_find` on the

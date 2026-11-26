@@ -802,6 +802,41 @@ fn memchr_workload_metadata() -> Json {
 }
 
 ///|
+/// Defines the complete bytecount inventory independently of the bench driver.
+fn bytecount_inventory() -> Map[String, Unit] {
+  let expected : Map[String, Unit] = Map([])
+  for
+    (length, offset) in [
+      (7, 0),
+      (16, 0),
+      (65, 3),
+      (128, 0),
+      (4096, 0),
+      (1048576, 1),
+    ] {
+    for implementation in ["own-dispatch", "own-naive"] {
+      expected["count:\{implementation}:\{length}:\{offset}"] = ()
+      expected["num-chars:\{implementation}:\{length}:\{offset}"] = ()
+    }
+    expected["count:memchr:\{length}:\{offset}"] = ()
+  }
+  expected
+}
+
+///|
+/// Rejects missing, duplicate, or substituted bytecount benchmark cases.
+fn validate_bytecount_inventory(records : Array[Json]) -> Unit raise {
+  let expected = bytecount_inventory()
+  for record in records {
+    guard record is { "name": String(name), .. } && expected.contains(name) else {
+      fail("Unexpected bytecount benchmark case")
+    }
+    let _ = expected.remove(name)
+  }
+  guard expected.is_empty() else { fail("Incomplete bytecount case inventory") }
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
@@ -809,6 +844,15 @@ async fn main {
     assert_eq(expected_ryu_names().length(), 85)
     assert_eq(expected_memchr_names().length(), 370)
     wc_inventory_self_test()
+    assert_eq(bytecount_inventory().length(), 30)
+    let bytecount_cases = bytecount_inventory()
+      .iter()
+      .map(entry => ({ "name": entry.0 } : Json))
+      .to_array()
+    validate_bytecount_inventory(bytecount_cases)
+    wc_must_reject(() => {
+      validate_bytecount_inventory(bytecount_cases[:29].to_owned())
+    })
     println("Benchmark collector inventory self-test passed")
     return
   }
@@ -829,7 +873,7 @@ async fn main {
   let selected_modules = if requested == ["all"] {
     [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
-      "wc",
+      "wc", "bytecount",
     ]
   } else {
     requested
@@ -861,8 +905,13 @@ async fn main {
       fail("A module must be a direct workspace module directory")
     }
     let directory = "_build/benchmarks/\{package_dir}"
-    let reversed = package_dir == "wc" &&
-      environment("WC_BENCHMARK_REVERSE") == "1"
+    let reversed = (
+        package_dir == "wc" && environment("WC_BENCHMARK_REVERSE") == "1"
+      ) ||
+      (
+        package_dir == "bytecount" &&
+        environment("BYTECOUNT_BENCHMARK_REVERSE") == "1"
+      )
     let log_directory = "\{directory}/\{os}" +
       (if reversed { "-reversed" } else { "" })
     @fs.mkdir(log_directory, recursive=true, allow_existing=true)
@@ -905,7 +954,8 @@ async fn main {
         ]
       } else if package_dir == "atoi" ||
         package_dir == "argminmax" ||
-        package_dir == "wc" {
+        package_dir == "wc" ||
+        package_dir == "bytecount" {
         [
           "-C",
           "benchmarks",
@@ -961,6 +1011,9 @@ async fn main {
       }
       if package_dir == "wc" {
         annotate_wc(records)
+      }
+      if package_dir == "bytecount" {
+        validate_bytecount_inventory(records)
       }
       if package_dir == "uuid" {
         validate_uuid_inventory(records)
@@ -1051,7 +1104,17 @@ async fn main {
       } else {
         false
       },
-      "comparison_dependencies": if package_dir == "wc" {
+      "comparison_dependencies": if package_dir == "bytecount" {
+        [
+          {
+            "label": "memchr",
+            "package": "justjavac/memchr",
+            "version": "0.1.0",
+            "license": "MIT",
+            "api": "memchr_iter(needle, data).count() on the same view",
+          },
+        ]
+      } else if package_dir == "wc" {
         [
           {
             "label": "reference",
@@ -1267,7 +1330,16 @@ async fn main {
           },
         ]
       },
-      "ported_upstream": if package_dir == "wc" {
+      "ported_upstream": if package_dir == "bytecount" {
+        {
+          "package": "bytecount",
+          "repository": "https://github.com/llogiq/bytecount",
+          "revision": "f06647f90a45ab302d9423dbe85019d595abf8c2",
+          "version": "0.6.9",
+          "license": "MIT",
+          "timed": false,
+        }
+      } else if package_dir == "wc" {
         {
           "package": "fastlwc",
           "repository": "https://github.com/expr-fi/fastlwc",
@@ -1313,7 +1385,19 @@ async fn main {
       } else {
         Json::null()
       },
-      "workload_metadata": if package_dir == "wc" {
+      "workload_metadata": if package_dir == "bytecount" {
+        {
+          "cases_per_backend": 30,
+          "offset_unit": "bytes",
+          "prepared": "Immutable repeated UTF-8 bytes, bounded views, and spaces as sentinels",
+          "timed": "Public calls, memchr cursor construction, callback dispatch, and keep barriers",
+          "measurement_order": if reversed {
+            "reversed"
+          } else {
+            "forward"
+          },
+        }
+      } else if package_dir == "wc" {
         {
           "cases_per_backend": 18,
           "prepared": "Immutable repeated ASCII text or deterministic binary bytes, views, and streaming chunks",
@@ -1371,7 +1455,8 @@ async fn main {
       },
       "backends": Json(backends),
     }
-    let record_name = if package_dir == "wc" && run_id == "" {
+    let record_name = if (package_dir == "wc" || package_dir == "bytecount") &&
+      run_id == "" {
       os +
       (if targets.length() == 1 { "-" + targets[0] } else { "" }) +
       (if reversed { "-reversed" } else { "" })

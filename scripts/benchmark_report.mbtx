@@ -252,13 +252,27 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       fail("Missing word-count release command or UTC timestamps")
     }
   }
+  if package_dir == "bytecount" {
+    validate_bytecount_inventory(summaries)
+    let started = text(value, "started_at_utc")
+    let finished = text(value, "finished_at_utc")
+    guard text(value, "command") ==
+      "moon -C benchmarks bench --target \{backend} --release --no-parallelize -p justjavac/benchmarks/bytecount" &&
+      started.length() == 20 &&
+      finished.length() == 20 &&
+      started.has_suffix("Z") &&
+      finished.has_suffix("Z") &&
+      started <= finished else {
+      fail("Missing bytecount release command or UTC timestamps")
+    }
+  }
   let names : Map[String, Unit] = Map([])
   for summary in summaries {
     let name = text(summary, "name")
     let _ = case_parts(summary)
     guard !names.contains(name) else { fail("Duplicate benchmark: \{name}") }
     names[name] = ()
-    if package_dir == "atoi" || package_dir == "wc" {
+    if ["atoi", "wc", "bytecount"].contains(package_dir) {
       validate_distribution(summary)
     }
     if package_dir == "argminmax" {
@@ -745,6 +759,21 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
   let canonical_cases : Map[String, Unit] = Map([])
   for record in records {
     let os = text(record, "os")
+    if package_dir == "bytecount" {
+      validate_bytecount_record(record)
+      guard @string.parse_int(text(record, "run_attempt")) > 0 &&
+        field(record, "working_tree_dirty") == Json(false) &&
+        field(record, "ported_upstream") == field(first, "ported_upstream") &&
+        field(record, "workload_metadata") == field(first, "workload_metadata") &&
+        toolchain_versions(text(record, "toolchain")) ==
+        toolchain_versions(text(first, "toolchain")) &&
+        text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+        text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+        fail("Mixed bytecount manifests, toolchains, or measurement order")
+      }
+    }
     if package_dir == "wc" {
       validate_wc_record(record)
       let attempt = @string.parse_int(text(record, "run_attempt"))
@@ -1080,6 +1109,9 @@ fn highlights(builder : StringBuilder, records : Array[Json]) -> Unit raise {
 /// Builds a concise, information-rich report backed by a complete JSON snapshot.
 fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
+  if package_dir == "bytecount" {
+    return bytecount_report(records)
+  }
   if package_dir == "wc" {
     return wc_report(records)
   }
@@ -3196,6 +3228,190 @@ async fn memchr_report(arguments : Array[String]) -> Unit {
 }
 
 ///|
+/// Enumerates bytecount cases with the operation, implementation, size, and offset.
+fn bytecount_names() -> Array[String] {
+  let names : Array[String] = []
+  for
+    (bytes, offset) in [
+      ("7", "0"),
+      ("16", "0"),
+      ("65", "3"),
+      ("128", "0"),
+      ("4096", "0"),
+      ("1048576", "1"),
+    ] {
+    for
+      (operation, implementation) in [
+        ("count", "own-dispatch"),
+        ("count", "own-naive"),
+        ("count", "memchr"),
+        ("num-chars", "own-dispatch"),
+        ("num-chars", "own-naive"),
+      ] {
+      names.push("\{operation}:\{implementation}:\{bytes}:\{offset}")
+    }
+  }
+  names
+}
+
+///|
+/// Rejects duplicate cases and substitutions, including a correct count with a wrong offset.
+fn validate_bytecount_inventory(summaries : Array[Json]) -> Unit raise {
+  let names = bytecount_names()
+  let seen : Map[String, Unit] = Map([])
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard names.contains(name) && !seen.contains(name) else {
+      fail("Unexpected bytecount benchmark: " + name)
+    }
+    seen[name] = ()
+  }
+  guard seen.length() == names.length() else {
+    fail("Incomplete bytecount benchmark inventory")
+  }
+}
+
+///|
+/// Verifies the upstream pin, the memchr API adapter, and the measurement metadata.
+fn validate_bytecount_record(record : Json) -> Unit raise {
+  guard field(record, "ported_upstream") ==
+    {
+      "package": "bytecount",
+      "repository": "https://github.com/llogiq/bytecount",
+      "revision": "f06647f90a45ab302d9423dbe85019d595abf8c2",
+      "version": "0.6.9",
+      "license": "MIT",
+      "timed": false,
+    } &&
+    array(record, "comparison_dependencies") ==
+    [
+      {
+        "label": "memchr",
+        "package": "justjavac/memchr",
+        "version": "0.1.0",
+        "license": "MIT",
+        "api": "memchr_iter(needle, data).count() on the same view",
+      },
+    ] else {
+    fail("Unexpected bytecount upstream or comparison metadata")
+  }
+  let workload = field(record, "workload_metadata")
+  let cpu = field(record, "cpu")
+  guard number(workload, "cases_per_backend") == 30 &&
+    text(workload, "offset_unit") == "bytes" &&
+    ["forward", "reversed"].contains(text(workload, "measurement_order")) &&
+    text(workload, "prepared") != "" &&
+    text(workload, "timed") != "" &&
+    text(cpu, "architecture") != "" &&
+    text(cpu, "model") != "" else {
+    fail("Missing bytecount workload or runner metadata")
+  }
+}
+
+///|
+/// Checks local provenance and validates each available backend once.
+fn validate_local_bytecount(record : Json) -> Unit raise {
+  guard text(record, "source") == "local" &&
+    text(record, "module") == "justjavac/bytecount" &&
+    text(record, "run_id") == "" &&
+    text(record, "run_url") == "" else {
+    fail("Expected local bytecount data")
+  }
+  validate_bytecount_record(record)
+  let backends = array(record, "backends")
+  guard !backends.is_empty() else { fail("Missing local bytecount results") }
+  let seen : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !seen.contains(name) else {
+      fail("Duplicate local bytecount backend")
+    }
+    seen[name] = ()
+    validate_backend(backend, "bytecount")
+  }
+}
+
+///|
+/// Renders representative bytecount results using the common comparison tables.
+fn bytecount_report(
+  records : Array[Json],
+  is_local~ : Bool = false,
+) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# Byte and UTF-8 code point count benchmarks\n\n")
+  if is_local {
+    let order = text(field(first, "workload_metadata"), "measurement_order")
+    builder.write_string("Local measurements in \{order} order.\n\n")
+  } else {
+    let revision = text(first, "source_commit")
+    builder.write_string(
+      "[CI run \{text(first, "run_id")}](\{text(first, "run_url")}), attempt \{text(first, "run_attempt")}, source `\{revision}`. [Complete data](BENCHMARK-DATA.json) covers three systems, four backends, and 30 cases each.\n\n",
+    )
+  }
+  builder.write_string(
+    "The adapters use the same prepared byte views and check every count against a direct byte predicate. The memchr comparison includes cursor construction. `*` marks CV >= 5%.\n\n",
+  )
+  for operation in ["count", "num-chars"] {
+    let implementations = if operation == "count" {
+      ["own-dispatch", "own-naive", "memchr"]
+    } else {
+      ["own-dispatch", "own-naive"]
+    }
+    let labels = if operation == "count" {
+      ["dispatch", "naive", "memchr"]
+    } else {
+      ["dispatch", "naive"]
+    }
+    results_table(
+      builder,
+      records,
+      "\{operation}, 16 bytes (ns)",
+      operation,
+      "16",
+      "0",
+      "ns",
+      16,
+      implementations~,
+      labels~,
+    )
+    results_table(
+      builder,
+      records,
+      "\{operation}, 1 MiB view at offset 1 (GiB/s)",
+      operation,
+      "1048576",
+      "1",
+      "GiB/s",
+      1048576,
+      implementations~,
+      labels~,
+    )
+  }
+  builder.write_string("## Runners\n\n")
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "- \{text(record, "os")}, \{text(cpu, "architecture")}, \{text(cpu, "model")}, Node \{text(record, "node")}\n",
+    )
+  }
+  builder.to_string()
+}
+
+///|
+/// Checks missing, duplicate, and substituted bytecount report cases.
+fn bytecount_report_self_test() -> Unit raise {
+  let cases = bytecount_names().map(name => ({ "name": name } : Json))
+  assert_eq(cases.length(), 30)
+  validate_bytecount_inventory(cases)
+  must_reject(() => validate_bytecount_inventory(cases[:29].to_owned()))
+  cases[0] = { "name": "count:own-dispatch:7:1" }
+  must_reject(() => validate_bytecount_inventory(cases))
+  cases[0] = cases[1]
+  must_reject(() => validate_bytecount_inventory(cases))
+}
+
+///|
 /// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
 async fn main {
   let arguments = @env.args()
@@ -3203,6 +3419,7 @@ async fn main {
     self_test()
     ryu_report(["--self-test"])
     memchr_report(["--self-test"])
+    bytecount_report_self_test()
     println("Benchmark report self-test passed")
     return
   }
@@ -3215,9 +3432,11 @@ async fn main {
       ryu_report(["--local", arguments[3], arguments[4]])
       return
     }
-    guard ["atoi", "utf8", "argminmax", "wc"].contains(arguments[2]) else {
+    guard ["atoi", "utf8", "argminmax", "wc", "bytecount"].contains(
+      arguments[2],
+    ) else {
       fail(
-        "Local rendering supports integer, UTF-8, extrema, and word-count artifacts",
+        "Local rendering supports integer, UTF-8, extrema, word-count, and bytecount artifacts",
       )
     }
     let record = @json.parse(@fs.read_text(arguments[3]))
@@ -3230,6 +3449,9 @@ async fn main {
     } else if arguments[2] == "wc" {
       validate_local_wc(record)
       wc_report([record], is_local=true)
+    } else if arguments[2] == "bytecount" {
+      validate_local_bytecount(record)
+      bytecount_report([record], is_local=true)
     } else {
       validate_local_atoi(record)
       atoi_report([record], is_local=true)

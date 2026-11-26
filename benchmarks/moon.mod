@@ -36,6 +36,7 @@ import {
   "justjavac/ryu@0.1.0",
   "justjavac/memchr@0.1.0",
   "justjavac/wc@0.1.0",
+  "justjavac/bytecount@0.1.0",
   "bobzhang/uuidm@0.2.0",
   "f4ah6o/uuidm@0.2.1",
   "moonbitstack/moonuuid@0.2.1",

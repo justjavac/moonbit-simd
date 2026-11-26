@@ -35,11 +35,9 @@ async fn main {
   for module_dir in directories {
     guard [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
-      "wc",
+      "wc", "bytecount",
     ].contains(module_dir) else {
-      fail(
-        "Expected a configured workspace library: crc32, url, utf8, base64, atoi, argminmax, uuid, ryu, memchr, or wc",
-      )
+      fail("Expected a configured workspace library: " + module_dir)
     }
     let packages = if module_dir == "memchr" {
       [("memchr", "memchr"), ("memchr/memmem", "memchr-memmem")]
@@ -71,7 +69,9 @@ async fn main {
         command.push(path)
       }
       command.push("\{prefix}.trace.source")
-      command.push("\{prefix}.whitebox_test.trace.source")
+      if module_dir != "bytecount" {
+        command.push("\{prefix}.whitebox_test.trace.source")
+      }
       command.push("\{prefix}.internal_test.trace.source")
       let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
       guard output.exit_code() == 0 else {
