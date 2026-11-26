@@ -13,19 +13,27 @@ struct Base64 {
 }
 
 ///|
-/// The standard `A-Z a-z 0-9 + /` alphabet with required `=` padding.
+/// Reusable RFC 4648 standard configuration with alphabet
+/// `A-Z a-z 0-9 + /`. A final one- or two-byte input group is encoded with
+/// the required terminal `=` padding, and strict decoding requires it.
 pub let standard : Base64 = { url_safe: false, padding: true, }
 
 ///|
-/// The standard alphabet with no padding; decoding rejects every `=`.
+/// Reusable configuration with the standard `+` and `/` alphabet.
+/// Encoding omits terminal padding, and strict decoding rejects every
+/// `=` while still checking the unused bits of the final symbol.
 pub let standard_no_pad : Base64 = { url_safe: false, padding: false, }
 
 ///|
-/// The URL-safe `A-Z a-z 0-9 - _` alphabet with required `=` padding.
+/// Reusable RFC 4648 URL-safe configuration. The symbols for sextets 62
+/// and 63 are `-` and `_`. Encoding and strict decoding use the same
+/// terminal padding rules as `standard`.
 pub let url_safe : Base64 = { url_safe: true, padding: true, }
 
 ///|
-/// The URL-safe alphabet with no padding; decoding rejects every `=`.
+/// Reusable configuration for unpadded Base64url. Encoding uses `-` and
+/// `_` without terminal `=`. Strict decoding expects that alphabet and
+/// validates the final symbol's unused bits.
 pub let url_safe_no_pad : Base64 = { url_safe: true, padding: false, }
 
 ///|
@@ -37,7 +45,10 @@ pub let url_safe_no_pad : Base64 = { url_safe: true, padding: false, }
 /// change an output prefix before a later `InvalidInput`; see their docs.
 #derive(Eq, Debug)
 pub suberror Base64Error {
+  /// Input violates the operation's alphabet, padding, length, or tail rules.
   InvalidInput
+  /// The destination offset is out of range or capacity is insufficient.
+  /// The destination is untouched when this error is raised.
   OutputTooSmall
 }
 
@@ -53,7 +64,9 @@ pub fn Base64::new(url_safe~ : Bool = false, padding~ : Bool = true) -> Base64 {
 ///|
 /// Returns the configuration's immutable 64-byte alphabet.
 ///
-/// The result can be retained independently of inputs and outputs.
+/// Byte at index `i` is the ASCII symbol for sextet `i`, from zero through
+/// 63. The view borrows shared immutable alphabet storage and can be retained
+/// independently of the configuration.
 pub fn Base64::charset(self : Base64) -> BytesView {
   if self.url_safe {
     url_alphabet[:]
@@ -81,8 +94,9 @@ pub fn Base64::encoded_length(self : Base64, length : Int32) -> Int32 {
 ///|
 /// Returns an allocation upper bound for decoding `length` encoded bytes.
 ///
-/// The estimate rounds up to a quartet and does not validate any input.
-/// Panics for negative lengths; all nonnegative `Int` lengths are safe.
+/// Rounds the encoded byte count up to complete quartets and reserves three
+/// bytes per quartet. This estimate is independent of alphabet and padding
+/// policy. It returns zero for zero, and panics for negative `length`.
 pub fn Base64::estimated_decoded_length(
   _self : Base64,
   length : Int32,
