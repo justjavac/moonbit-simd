@@ -294,10 +294,12 @@ fn validate_metadata(record : Json, fragment~ : Bool = false) -> Unit raise {
     text(reference, "api") != "" else {
     fail("Changed or incomplete memchr comparison dependencies")
   }
+  let comparison_manifest = text(record, "comparison_manifest")
   guard text(record, "module_manifest").find("name = \"justjavac/memchr\"")
     is Some(_) &&
-    text(record, "comparison_manifest").find("justjavac/memchr@0.1.0")
-    is Some(_) &&
+    ["0.1.0", "0.1.1"].any(version => {
+      comparison_manifest.find("justjavac/memchr@" + version) is Some(_)
+    }) &&
     text(record, "source_commit").length() == 40 &&
     text(record, "dependency_tree") != "" &&
     text(record, "node") != "" &&
