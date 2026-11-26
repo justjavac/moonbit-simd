@@ -70,6 +70,13 @@ pub fn validate(data : BytesView, simd~ : Bool = true) -> Unit raise Utf8Error {
 /// `simd` controls validation only, with the same short-input and backend
 /// fallbacks as `validate`. Decoding uses the installed core UTF-8 decoder after
 /// successful validation and is an additional cost.
+///
+/// ```mbt check
+/// test {
+///   let bytes = b"|caf\xC3\xA9|"
+///   assert_eq(@utf8.from_utf8(bytes[1:6]), "café")
+/// }
+/// ```
 pub fn from_utf8(
   data : BytesView,
   simd~ : Bool = true,
