@@ -10,7 +10,7 @@ license = "MIT"
 
 keywords = [ "base64", "simd", "encoding", "rfc4648" ]
 
-description = "Portable RFC 4648 Base64 and WHATWG forgiving decoding ported from base64-simd"
+description = "Portable RFC 4648 Base64 and WHATWG forgiving decoding with packed scalar tables and V128"
 
 preferred_target = "wasm"
 

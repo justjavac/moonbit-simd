@@ -168,6 +168,31 @@ test "every single byte and every two-byte high sextet round trips" {
 }
 
 ///|
+test "packed encoding covers every twelve-bit index in each half of a triple" {
+  let length = 4096 * 3
+  let backing = Bytes::makei(length + 2, index => {
+    if index == 0 || index == length + 1 {
+      b'!'
+    } else {
+      let position = index - 1
+      let pair = position / 3
+      let triple = (pair << 12) | pair
+      (triple >> (16 - position % 3 * 8)).to_byte()
+    }
+  })
+  let input = backing[1:1 + length]
+  for (config, url_safe, padding) in policies() {
+    let expected = ascii(bitstream_encode(input, url_safe, padding))
+    let output = FixedArray::make(expected.length() + 2, b'!')
+    assert_eq(
+      config.encode_into(input, output, offset=1, simd=false),
+      expected.length(),
+    )
+    assert_eq(Bytes::from_array(output[:]), b"!" + expected + b"!")
+  }
+}
+
+///|
 test "length estimates preserve structural-only validation and avoid integer overflow" {
   for (config, _, padding) in policies() {
     assert_eq(config.estimated_decoded_length(0), 0)

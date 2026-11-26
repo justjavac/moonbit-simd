@@ -1361,6 +1361,13 @@ fn base64_report(records : Array[Json]) -> String raise {
   )
   comparison_legend(builder)
   base64_highlights(builder, records)
+  if text(first, "module_manifest").contains(
+      "with packed scalar tables and V128",
+    ) {
+    builder.write_string(
+      "The scalar codec uses packed lookup tables adapted from aklomp/base64. Allocating byte APIs return their freshly filled buffers directly. [Algorithm and attribution](README.md#algorithm-and-backend-behavior)\n\n",
+    )
+  }
   builder.write_string(
     "## Implementations\n\n| Label | Package / version | Public API measured |\n| --- | --- | --- |\n| ours scalar / SIMD request | justjavac/base64 / source above | encode_to_string, decode_string; explicit simd=false/true |\n",
   )

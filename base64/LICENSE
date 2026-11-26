@@ -6,6 +6,8 @@ Copyright (c) 2021 Nugine
 This library incorporates algorithms and test expectations from base64-simd
 and vsimd 0.8.0 (https://github.com/Nugine/simd), revision
 d74c030d9dc4f3cae02146d1f497ff62726ef09a, originally licensed under MIT.
+The packed Base64 lookups also adapt aklomp/base64 under the BSD 2-Clause
+license reproduced in LICENSE-BSD.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

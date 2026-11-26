@@ -153,9 +153,17 @@ no stateful streaming encoder/decoder, and this port does not add one.
 
 ## Algorithm and backend behavior
 
-The scalar path uses the RFC 4648 alphabets and reusable 256-entry decoding
-tables. Quartet validation combines invalid-byte flags before writing three
-decoded bytes, and remainder checks enforce canonical unused bits.
+The scalar path adapts aklomp/base64's generic 32-bit codec. Two lookups into a
+4096-entry table translate each input triple into two ASCII pairs. Encoding
+loads four bytes only when all four are in the view and consumes three. Each
+encoded quartet uses four position-specific lookups to assemble the three
+decoded bytes and flag invalid characters. The scalar `check` uses the smaller
+256-entry validation table. Reads of UTF-16 code units check their range before
+lookup. Tail checks enforce canonical unused bits. All tables are derived once
+from the standard and URL-safe alphabets.
+
+Allocating byte APIs return their freshly filled buffer as immutable `Bytes`.
+Caller-provided buffers receive exact-width stores, including on the last group.
 
 The V128 path adapts upstream's portable Wasm/NEON bit transforms and
 ALSW (average, lookup, saturating add, wrapping add) decoding. Lookup offsets
@@ -179,11 +187,10 @@ can become a valid sextet.
 This is portable MoonBit code, with no Rust runtime, native FFI, CPU-feature
 assumptions, or AVX2-specific kernels. V128 is not a guarantee of native hardware
 acceleration. Backend defaults and dispatch costs must be remeasured after
-toolchain changes; [BENCHMARK.md](BENCHMARK.md) records complete public operations
-and includes explicit scalar/SIMD requests.
+toolchain changes. The selected CI snapshot records complete operations and
+explicit scalar/SIMD requests at its listed source revision. [Benchmarks](BENCHMARK.md)
 
-Validated locally with `moon 0.1.20261120` and
-`moonc v0.10.22+7b085e9a4-nightly` (2026-11-22).
+Validated locally with `moon 0.1.20261120` and `moon 0.1.20261126`.
 Native builds need a platform C compiler; JS tests need Node.js. CI uses
 MoonBit nightly and Node.js 24 and records actual versions for every runner.
 The macOS job uses the maintained `macos-15` ARM64 image. The current
@@ -204,6 +211,10 @@ The base64-simd crate archive has SHA-256
 Upstream is MIT, copyright 2021 Nugine; [LICENSE](LICENSE) preserves that notice.
 Its Rust output-reference dependency is declared as `outref 0.5.0`; MoonBit
 uses ordinary fixed arrays and returned counts instead.
+
+The scalar packed lookups adapt aklomp/base64's generic 32-bit codec.
+The upstream BSD 2-Clause text accompanies this module.
+[Upstream codec](https://github.com/aklomp/base64/tree/5d5074cb856b9a53fe64f04ddf47812a85f4fb5a/lib/arch/generic/32) · [License](LICENSE-BSD)
 
 Implemented: four policies, sizing, strict checking, allocated byte/string APIs,
 caller-provided output, in-place decoding, append conveniences, forgiving
@@ -226,7 +237,8 @@ Black-box tests cover RFC 4648 and retained upstream basic, allocation, canonici
 and forgiving vectors; independent per-bit and core differential results; every
 short/tail length; vector boundaries; all byte values at each lane; non-ASCII and
 unpaired UTF-16 surrogates; offsets 0 through 16; sentinels outside input/output
-ranges; array aliases; append failure behavior; and size overflow. White-box tests
+ranges; every packed encoding index in both positions; array aliases; append
+failure behavior; and size overflow. White-box tests
 verify generated ALSW classification and sextet values against an independent
 per-byte oracle.
 

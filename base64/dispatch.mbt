@@ -11,7 +11,7 @@ fn encode_dispatch(
   if simd && input.length() >= 16 {
     encode_simd(input, output, offset, config)
   } else {
-    encode_scalar(input, output, offset, config.charset(), config.padding)
+    encode_scalar(input, output, offset, config)
   }
 }
 
@@ -25,7 +25,7 @@ fn encode_dispatch(
   config : Base64,
   _simd : Bool,
 ) -> Unit {
-  encode_scalar(input, output, offset, config.charset(), config.padding)
+  encode_scalar(input, output, offset, config)
 }
 
 ///|
@@ -44,16 +44,7 @@ fn decode_dispatch(
   if simd && length >= 16 {
     decode_simd(input, length, output, offset, config, forgiving, write)
   } else {
-    decode_scalar(
-      input,
-      0,
-      length,
-      output,
-      offset,
-      config.decode_table(),
-      forgiving,
-      write,
-    )
+    decode_scalar(input, 0, length, output, offset, config, forgiving, write)
   }
 }
 
@@ -70,14 +61,5 @@ fn decode_dispatch(
   write : Bool,
   _simd : Bool,
 ) -> Unit raise Base64Error {
-  decode_scalar(
-    input,
-    0,
-    length,
-    output,
-    offset,
-    config.decode_table(),
-    forgiving,
-    write,
-  )
+  decode_scalar(input, 0, length, output, offset, config, forgiving, write)
 }
