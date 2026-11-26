@@ -136,6 +136,39 @@ fn self_test() -> Unit raise {
 }
 
 ///|
+/// Keeps executable or configuration changes for automatic benchmark selection.
+async fn benchmark_changes(
+  before : String,
+  paths : ArrayView[String],
+) -> Array[String] {
+  let relevant : Array[String] = []
+  for path in paths {
+    let ignore_lines = if path.has_suffix(".mbt") {
+      Some("^[[:space:]]*///($|[[:space:]])")
+    } else if path.has_suffix("/moon.mod") {
+      Some("^version = \"[0-9]+[.][0-9]+[.][0-9]+\"$")
+    } else {
+      None
+    }
+    if ignore_lines is Some(pattern) {
+      // One pattern per file kind keeps release metadata rules out of code.
+      let status = @shell.Cmd("git", [
+        "diff", "--quiet", "--no-ext-diff", "--no-renames", "-I", pattern, before,
+        "HEAD", "--", path,
+      ]).status()
+      guard status == 0 || status == 1 else {
+        fail("Cannot inspect the benchmark diff for " + path)
+      }
+      if status == 0 {
+        continue
+      }
+    }
+    relevant.push(path)
+  }
+  relevant
+}
+
+///|
 /// Emits a manual or changed-library matrix as GitHub step outputs and local diagnostic JSON.
 async fn main {
   let args = @env.args()
@@ -157,17 +190,25 @@ async fn main {
     }
   } else {
     let before = @env.get_env_var("BENCHMARK_BASE").unwrap_or("")
-    let command = if before == "" || before.all(char => char == '0') {
+    let first_push = before == "" || before.all(char => char == '0')
+    let command = if first_push {
       ["ls-tree", "-r", "--name-only", "HEAD", "--"]
     } else {
       ["diff", "--name-only", "--no-renames", before, "HEAD", "--"]
     }
     let output = @shell.Cmd("git", command).output(max_output_bytes=2097152)
     guard output.exit_code() == 0 else { fail(output.stderr()) }
-    affected(
-      libraries,
-      output.stdout().split("\n").map(line => line.to_owned()).to_array(),
-    )
+    let paths = output
+      .stdout()
+      .split("\n")
+      .map(line => line.to_owned())
+      .to_array()
+    let changed = if first_push {
+      paths
+    } else {
+      benchmark_changes(before, paths)
+    }
+    affected(libraries, changed)
   }
   let value = matrix(selected).stringify()
   let output_file = @env.get_env_var("GITHUB_OUTPUT").unwrap_or("")
