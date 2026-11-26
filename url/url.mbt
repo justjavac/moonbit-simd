@@ -20,26 +20,31 @@ struct Url {
 ///|
 /// Returns the complete canonical URL without allocating another string.
 /// Includes empty query and fragment delimiters when they were present.
+/// The returned immutable string stays valid across later setters.
 pub fn Url::href(self : Url) -> String {
   self.text
 }
 
 ///|
-/// Returns the lowercase ASCII scheme with its trailing colon as a view.
+/// Returns a view of the lowercase ASCII scheme and trailing colon.
+/// For example, an HTTPS URL returns `"https:"`. The view is a snapshot
+/// of the current serialization.
 pub fn Url::protocol(self : Url) -> StringView {
   self.text[:self.positions.protocol_end]
 }
 
 ///|
 /// Returns the percent-encoded username without the credentials delimiter.
-/// An absent username is an empty view; no decoding or allocation occurs.
+/// An absent username is an empty view. Percent escapes are returned as
+/// stored, and the view stays valid across later setters.
 pub fn Url::username(self : Url) -> StringView {
   self.text[self.positions.username_start:self.positions.username_end]
 }
 
 ///|
-/// Returns the percent-encoded password without its leading colon or trailing at sign.
-/// An absent password is an empty view; no decoding or allocation occurs.
+/// Returns a snapshot of the percent-encoded password, excluding the
+/// delimiters used to serialize credentials. An absent password yields an
+/// empty view.
 pub fn Url::password(self : Url) -> StringView {
   self.text[self.positions.password_start:self.positions.password_end]
 }
@@ -63,7 +68,9 @@ pub fn Url::hostname(self : Url) -> StringView {
 }
 
 ///|
-/// Returns decimal port digits without the colon, or empty for omitted/default ports.
+/// Returns a view of the decimal port digits, excluding the colon.
+/// Omitted ports and ports normalized to the scheme's default yield an
+/// empty view.
 pub fn Url::port(self : Url) -> StringView {
   if self.port_number is Some(_) {
     self.text[self.positions.port_start:self.positions.path_start]
@@ -73,8 +80,9 @@ pub fn Url::port(self : Url) -> StringView {
 }
 
 ///|
-/// Returns the canonical path, preserving encoded slashes and normalizing dot segments.
-/// Hierarchical paths include their leading slash; opaque paths do not add one.
+/// Returns the path after URL normalization. Hierarchical paths retain their
+/// leading slash and resolved dot segments. Opaque paths return their stored
+/// data. Percent-encoded slashes stay escaped.
 pub fn Url::pathname(self : Url) -> StringView {
   self.text[self.positions.path_start:self.positions.path_end]
 }
@@ -102,7 +110,20 @@ pub fn Url::hash(self : Url) -> StringView {
 }
 
 ///|
-/// Returns the query without its delimiter, preserving Some("") for an empty query.
+/// Returns the raw serialized query as a view, excluding the question mark.
+/// `None` means the delimiter was absent. `Some("")` means it was present
+/// with no query bytes. Use `search_params` to decode form-style pairs.
+///
+/// ```mbt check
+/// test {
+///   let address = @url.parse("https://example.com/?")
+///   let snapshot = address.query()
+///   assert_true(snapshot is Some(""))
+///   address.set_search("")
+///   assert_true(address.query() is None)
+///   assert_true(snapshot is Some(""))
+/// }
+/// ```
 pub fn Url::query(self : Url) -> StringView? {
   if self.query_present {
     Some(self.text[self.positions.query_start:self.positions.query_end])
@@ -112,7 +133,9 @@ pub fn Url::query(self : Url) -> StringView? {
 }
 
 ///|
-/// Returns the fragment without its delimiter, preserving Some("") for an empty fragment.
+/// Returns the serialized fragment as a view, excluding the hash delimiter.
+/// `None` means the delimiter was absent. `Some("")` means it was present
+/// with an empty fragment. Percent escapes are returned as stored.
 pub fn Url::fragment(self : Url) -> StringView? {
   if self.fragment_present {
     Some(self.text[self.positions.fragment_start:])
@@ -129,7 +152,9 @@ pub fn Url::has_opaque_path(self : Url) -> Bool {
 }
 
 ///|
-/// Reports whether the scheme is http, https, ws, wss, ftp, or file.
+/// Reports whether the scheme belongs to the WHATWG special-scheme set
+/// (`http`, `https`, `ws`, `wss`, `ftp`, and `file`). This classification
+/// selects the relevant host, port, and path normalization rules.
 pub fn Url::is_special(self : Url) -> Bool {
   is_special_scheme(self.scheme)
 }
@@ -178,19 +203,23 @@ pub fn Url::join(self : Url, input : StringView) -> Url raise ParseError {
 }
 
 ///|
-/// Returns the canonical URL as an ordinary String without extra allocation.
+/// Returns the same immutable full serialization as `href()`, including any
+/// credentials and delimiter-only query or fragment. The string can be saved
+/// as a snapshot before editing this URL.
 pub fn Url::to_string(self : Url) -> String {
   self.text
 }
 
 ///|
-/// Compares canonical URL values; subsequent setters may change the comparison.
+/// Tests equality of the current complete canonical serializations, including
+/// query and fragment delimiters. Setters can change a later comparison.
 pub impl Eq for Url with fn equal(self, other) {
   self.text == other.text
 }
 
 ///|
-/// Writes the canonical serialized URL to a logger.
+/// Writes the full canonical serialization to the supplied logger. It includes
+/// username and password components when present.
 pub impl Show for Url with fn output(self, logger) {
   logger.write_string(self.text)
 }
