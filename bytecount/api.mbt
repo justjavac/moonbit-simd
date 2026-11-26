@@ -1,13 +1,19 @@
 ///|
 /// Counts occurrences of `needle` in the given byte view.
 ///
-/// The input is borrowed and can include any byte values. The result is zero
-/// for an empty view and at most the view length. The implementation selects
-/// a vector or scalar kernel according to the backend and length.
+/// `data` may be a whole byte buffer or an unaligned subview. Each byte equal
+/// to `needle` contributes one, including zero and bytes above ASCII. The
+/// result is between zero and `data.length()` inclusive. The scan reads only
+/// the view and creates no copy.
+///
+/// Native and linear-memory Wasm use vectors from 128 bytes. Shorter inputs
+/// and Wasm GC use scalar word operations with a byte tail. JavaScript uses
+/// scalar words from 128 bytes and a byte loop for shorter views.
 ///
 /// ```mbt check
 /// test {
-///   assert_eq(@bytecount.count(b"one two three", b' '), 2)
+///   let data = b"|one two three|"
+///   assert_eq(@bytecount.count(data[1:14], b' '), 2)
 /// }
 /// ```
 pub fn count(data : BytesView, needle : Byte) -> Int32 {
@@ -18,9 +24,14 @@ pub fn count(data : BytesView, needle : Byte) -> Int32 {
 /// Counts bytes outside the UTF-8 continuation-byte range `0x80..0xBF`.
 ///
 /// For well-formed UTF-8, the result is the number of Unicode code points,
-/// including a BOM if present. The function reads the view as-is without
-/// validation, decoding, or copying. A malformed input still returns the
-/// exact number of non-continuation bytes. An empty view returns zero.
+/// including a leading BOM and each combining mark. The same rule applies
+/// byte by byte to malformed or truncated data. For example, a partial view
+/// starting with a continuation byte skips that byte, and a truncated lead
+/// byte at the end of a view still contributes one. Empty views return zero.
+///
+/// The scan borrows the input and produces only an integer. Native and
+/// linear-memory Wasm use vectors from 128 bytes, Wasm GC uses scalar words,
+/// and JavaScript uses a byte loop.
 ///
 /// ```mbt check
 /// test {
@@ -34,7 +45,10 @@ pub fn num_chars(data : BytesView) -> Int32 {
 ///|
 /// Counts occurrences of `needle` in a byte view one byte at a time.
 ///
-/// Accepts arbitrary bytes, borrows the view, and returns zero for empty input.
+/// The input is the half-open range represented by `data`, and all 256
+/// values of `needle` are accepted. Empty views return zero. This scalar
+/// reference loop performs one comparison per byte on every backend,
+/// with constant auxiliary space and borrowed input.
 pub fn naive_count(data : BytesView, needle : Byte) -> Int32 {
   let start = data.start_offset()
   count_bytes(data.data(), start, start + data.length(), needle)
@@ -43,8 +57,10 @@ pub fn naive_count(data : BytesView, needle : Byte) -> Int32 {
 ///|
 /// Counts occurrences of `needle` with the same 32-bit loop as `naive_count`.
 ///
-/// MoonBit view lengths fit in `Int32`, so the count is exact for every view.
-/// The name corresponds to the upstream `naive_count_32` entry point.
+/// This is the upstream compatibility spelling of `naive_count`. It uses
+/// an `Int32` accumulator, which represents every possible count in a
+/// MoonBit `BytesView`. It accepts arbitrary bytes, reads only the view,
+/// and returns zero for empty input on every backend.
 pub fn naive_count_32(data : BytesView, needle : Byte) -> Int32 {
   naive_count(data, needle)
 }
@@ -52,8 +68,10 @@ pub fn naive_count_32(data : BytesView, needle : Byte) -> Int32 {
 ///|
 /// Counts non-continuation bytes one byte at a time.
 ///
-/// Like `num_chars`, this works on arbitrary byte views, returns zero for
-/// empty input, and counts code points on well-formed UTF-8.
+/// A byte contributes one exactly when its top two bits differ from `10`.
+/// This gives the code point count for valid UTF-8 and the same byte
+/// classification as `num_chars` for arbitrary input. The loop examines each
+/// byte of `data` once on every backend and returns zero for an empty view.
 pub fn naive_num_chars(data : BytesView) -> Int32 {
   let start = data.start_offset()
   count_chars(data.data(), start, start + data.length())
