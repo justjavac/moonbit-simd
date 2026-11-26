@@ -1,5 +1,7 @@
 ///|
-/// Dispatches Byte searches to bounded vectors or the scalar contract.
+/// Searches unsigned eight-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 33 elements. Automatic and shorter searches use scalar code.
 pub impl Element for Byte with fn find_extrema(
   data,
   minimum~,
@@ -39,7 +41,9 @@ impl VectorElement for Byte with fn less(left, right) {
 }
 
 ///|
-/// Dispatches Int8 searches to bounded vectors or the scalar contract.
+/// Searches signed eight-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 33 elements. Automatic and shorter searches use scalar code.
 pub impl Element for Int8 with fn find_extrema(
   data,
   minimum~,
@@ -79,7 +83,9 @@ impl VectorElement for Int8 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches UInt16 searches to bounded vectors or the scalar contract.
+/// Searches unsigned sixteen-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 17 elements. Automatic and shorter searches use scalar code.
 pub impl Element for UInt16 with fn find_extrema(
   data,
   minimum~,
@@ -119,7 +125,9 @@ impl VectorElement for UInt16 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches Int16 searches to bounded vectors or the scalar contract.
+/// Searches signed sixteen-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 17 elements. Automatic and shorter searches use scalar code.
 pub impl Element for Int16 with fn find_extrema(
   data,
   minimum~,
@@ -159,7 +167,9 @@ impl VectorElement for Int16 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches UInt searches to bounded vectors or the scalar contract.
+/// Searches unsigned thirty-two-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 9 elements. Automatic and shorter searches use scalar code.
 pub impl Element for UInt32 with fn find_extrema(
   data,
   minimum~,
@@ -199,7 +209,9 @@ impl VectorElement for UInt32 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches Int searches to bounded vectors or the scalar contract.
+/// Searches signed thirty-two-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 9 elements. Automatic and shorter searches use scalar code.
 pub impl Element for Int32 with fn find_extrema(
   data,
   minimum~,
@@ -239,7 +251,9 @@ impl VectorElement for Int32 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches UInt64 searches to bounded vectors or the scalar contract.
+/// Searches unsigned sixty-four-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 5 elements. Automatic and shorter searches use scalar code.
 pub impl Element for UInt64 with fn find_extrema(
   data,
   minimum~,
@@ -282,7 +296,9 @@ impl VectorElement for UInt64 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches Int64 searches to bounded vectors or the scalar contract.
+/// Searches signed sixty-four-bit values in numeric order under `Element::find_extrema`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 5 elements. Automatic and shorter searches use scalar code.
 pub impl Element for Int64 with fn find_extrema(
   data,
   minimum~,
@@ -322,7 +338,10 @@ impl VectorElement for Int64 with fn less(left, right) {
 }
 
 ///|
-/// Dispatches Float searches to bounded vectors or the scalar contract.
+/// Searches binary32 values using the NaN and first-tie rules of `Element`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 9 elements. Automatic vectors apply only to dual-extremum,
+/// NaN-ignoring searches on linear-memory Wasm from 4096 elements.
 pub impl Element for Float with fn find_extrema(
   data,
   minimum~,
@@ -334,7 +353,8 @@ pub impl Element for Float with fn find_extrema(
 }
 
 ///|
-/// Classifies NaNs before numeric comparisons for Float elements.
+/// Reports whether a binary32 value is NaN, including either sign and all
+/// payloads. Infinities and finite values return false.
 pub impl Element for Float with fn is_nan(value) {
   Float::is_nan(value)
 }
@@ -375,7 +395,10 @@ impl VectorElement for Float with fn ordered(value) {
 }
 
 ///|
-/// Dispatches Double searches to bounded vectors or the scalar contract.
+/// Searches binary64 values using the NaN and first-tie rules of `Element`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 5 elements. Automatic vectors apply only to dual-extremum,
+/// NaN-ignoring searches on linear-memory Wasm from 4096 elements.
 pub impl Element for Double with fn find_extrema(
   data,
   minimum~,
@@ -387,7 +410,8 @@ pub impl Element for Double with fn find_extrema(
 }
 
 ///|
-/// Classifies NaNs before numeric comparisons for Double elements.
+/// Reports whether a binary64 value is NaN, including either sign and all
+/// payloads. Infinities and finite values return false.
 pub impl Element for Double with fn is_nan(value) {
   Double::is_nan(value)
 }
@@ -428,7 +452,9 @@ impl VectorElement for Double with fn ordered(value) {
 }
 
 ///|
-/// Dispatches Float16 searches to bounded vectors or the scalar contract.
+/// Searches binary16 values using the NaN and first-tie rules of `Element`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 17 elements. Automatic searches use scalar code.
 pub impl Element for Float16 with fn find_extrema(
   data,
   minimum~,
@@ -440,7 +466,8 @@ pub impl Element for Float16 with fn find_extrema(
 }
 
 ///|
-/// Classifies NaNs before numeric comparisons for Float16 elements.
+/// Reports whether a binary16 value is NaN, including either sign and all
+/// payloads. Infinities and finite values return false.
 pub impl Element for Float16 with fn is_nan(value) {
   Float16::is_nan(value)
 }
@@ -481,7 +508,9 @@ impl VectorElement for Float16 with fn ordered(value) {
 }
 
 ///|
-/// Dispatches BFloat16 searches to bounded vectors or the scalar contract.
+/// Searches bfloat16 values using the NaN and first-tie rules of `Element`.
+/// An explicit SIMD request can use vectors on native or linear-memory Wasm
+/// from 17 elements. Automatic searches use scalar code.
 pub impl Element for BFloat16 with fn find_extrema(
   data,
   minimum~,
@@ -493,7 +522,8 @@ pub impl Element for BFloat16 with fn find_extrema(
 }
 
 ///|
-/// Classifies NaNs before numeric comparisons for BFloat16 elements.
+/// Reports whether a bfloat16 value is NaN, including either sign and all
+/// payloads. Infinities and finite values return false.
 pub impl Element for BFloat16 with fn is_nan(value) {
   BFloat16::is_nan(value)
 }
