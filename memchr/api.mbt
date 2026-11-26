@@ -2,13 +2,16 @@
 /// Returns the first byte offset of `needle` in `haystack`, or `None` if absent.
 /// Empty input has no match. Offsets are relative to the supplied view; arbitrary
 /// bytes, NUL, and unaligned views are supported without mutation or decoding.
-/// `simd=true` uses complete sixteen-byte vectors on native/linear-memory Wasm;
-/// shorter input and Wasm GC use SWAR/tails; JavaScript uses byte comparisons.
+/// The default `simd=true` requests vectors on native and linear-memory Wasm
+/// for complete sixteen-byte blocks. Shorter input, Wasm GC, and
+/// `simd=false` use scalar code. JavaScript uses byte comparisons.
 ///
 /// ```mbt check
 /// test {
 ///   assert_eq(@memchr.memchr(b'o', b"foo bar"), Some(1))
 ///   assert_eq(@memchr.memchr(b'x', b"foo bar"), None)
+///   let data = b"|foo|"
+///   assert_eq(@memchr.memchr(b'o', data[1:4]), Some(1))
 /// }
 /// ```
 pub fn memchr(

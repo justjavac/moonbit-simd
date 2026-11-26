@@ -73,9 +73,20 @@ pub fn Matches::iter(self : Matches) -> Iter[Int32] {
 }
 
 ///|
-/// Counts and consumes all remaining unique matching byte positions.
-/// The result is at most the remaining byte length. Complete vectors or exact
-/// SWAR masks count several matches at once; this exhausts all cursor aliases.
+/// Counts and consumes all unique matches between the cursor's current ends.
+/// Earlier calls to `next()` and `next_back()` exclude their matches from
+/// this total. The result is zero for an exhausted cursor, and calling this
+/// method exhausts all aliases. Counting uses the cursor's SIMD preference.
+///
+/// ```mbt check
+/// test {
+///   let cursor = @memchr.memchr_iter(b'a', b"aba")
+///   let shared = cursor
+///   assert_eq(shared.next_back(), Some(2))
+///   assert_eq(cursor.count(), 1)
+///   assert_eq(shared.next(), None)
+/// }
+/// ```
 pub fn Matches::count(self : Matches) -> Int32 {
   let count = count_bytes(
     self.needles,

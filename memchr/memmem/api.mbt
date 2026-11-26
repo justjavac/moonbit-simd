@@ -64,6 +64,16 @@ pub fn find_iter(
 /// Empty needles enumerate boundaries from the end through zero. Reverse match
 /// selection can differ from reversed forward results for overlapping patterns.
 /// Cursor assignment aliases progress; `simd` follows `FinderRev::new`.
+///
+/// ```mbt check
+/// test {
+///   let forward = @memmem.find_iter(b"aaa", b"aa")
+///   let reverse = @memmem.rfind_iter(b"aaa", b"aa")
+///   assert_eq(forward.next(), Some(0))
+///   assert_eq(reverse.next(), Some(1))
+///   assert_eq(reverse.next(), None)
+/// }
+/// ```
 pub fn rfind_iter(
   haystack : BytesView,
   needle : BytesView,
