@@ -1,5 +1,7 @@
 ///|
-/// Implements range-checked decimal parsing for UInt64.
+/// Parses an unsigned sixty-four-bit value from zero through `2^64 - 1`.
+/// Uses the twenty-digit budget before checking the value range. Accepted
+/// signs, leading zeroes, and consumed-byte counts follow `Parse::parse_decimal`.
 pub impl Parse for UInt64 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -24,7 +26,9 @@ pub impl Parse for UInt64 with fn parse_decimal(
 }
 
 ///|
-/// Implements range-checked decimal parsing for Int64.
+/// Parses a signed sixty-four-bit value from `-2^63` through `2^63 - 1`.
+/// Uses the nineteen-digit budget and checks the sign-specific bound.
+/// Accepted signs and consumed bytes follow `Parse::parse_decimal`.
 pub impl Parse for Int64 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -49,7 +53,9 @@ pub impl Parse for Int64 with fn parse_decimal(
 }
 
 ///|
-/// Implements sign-free negative decimal parsing for Int64.
+/// Parses sign-free digits as a value from `-2^63` through zero.
+/// Uses the nineteen-digit budget, with `skip_zeroes` controlling whether
+/// leading zeroes count toward it. Consumption follows `ParseNeg`.
 pub impl ParseNeg for Int64 with fn parse_negative_decimal(
   data : BytesView,
   prefix~ : Bool,

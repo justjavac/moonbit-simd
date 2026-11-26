@@ -10,9 +10,9 @@ pub(open) trait Parse {
   /// `skip_plus` permits one `+`. `prefix` permits a non-digit suffix.
   /// `skip_zeroes` removes leading zeroes from the 64/128-bit size budget;
   /// narrower types accept arbitrarily many leading zeroes in either mode.
-  /// `simd` requests checked sixteen-byte digit vectors on native and Wasm;
-  /// leading-zero removal always uses the measured scalar/SWAR scan.
-  /// short inputs and other backends use the scalar/SWAR implementation.
+  /// `simd` requests checked sixteen-byte digit vectors on native and
+  /// linear-memory Wasm. Leading-zero removal, short inputs, and other
+  /// backends use scalar or SWAR processing.
   /// Failures raise `ParseError` and leave the input unchanged.
   fn parse_decimal(
     BytesView,
@@ -50,9 +50,11 @@ pub(open) trait ParseNeg {
 /// Signed types accept one leading `-`; unsigned types reject it, including
 /// `-0`. `skip_plus=true` permits one leading `+`. Only ASCII `0` through `9`
 /// are digits: whitespace, separators, radix prefixes, and Unicode digits are
-/// rejected. `skip_zeroes=true` permits unlimited leading zeroes for 64/128-bit
-/// results; otherwise their digit budgets are 19/20 and 39 respectively.
-/// Narrower results always permit unlimited leading zeroes and check overflow.
+/// rejected. By default both skip options are false. With
+/// `skip_zeroes=true`, the leading zeroes of a 64- or 128-bit result are
+/// excluded from the digit budget. The budgets are 19 for `Int64`, 20 for
+/// `UInt64`, and 39 for both 128-bit types. Narrower types always permit
+/// arbitrarily many leading zeroes and check overflow against their range.
 ///
 /// Raises `ParseError` for an empty digit prefix, excessive size, overflow, or
 /// a non-digit suffix. Error indices are relative to the stored input view,
@@ -115,6 +117,13 @@ pub fn[T : Parse] parse_pos(
 /// value is accepted without first converting its magnitude to a signed type.
 /// `skip_zeroes`, range/size failures, immutable views, and SIMD fallbacks match
 /// `parse`. The entire view must be digits; otherwise `ParseError` is raised.
+///
+/// ```mbt check
+/// test {
+///   let value : @atoi.Int8 = @atoi.parse_neg(b"128")
+///   assert_eq(value.to_int(), -128)
+/// }
+/// ```
 pub fn[T : ParseNeg] parse_neg(
   data : BytesView,
   skip_zeroes~ : Bool = false,

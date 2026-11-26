@@ -14,9 +14,17 @@
 /// No error mutates the input; retaining an error may retain its backing bytes.
 #derive(Debug, Eq)
 pub(all) suberror ParseError {
+  /// No digit was found at the start of the digit view.
   Empty
+  /// Carries the observed digit prefix length and the original sign-free view.
+  /// The length includes accepted leading zeroes.
   Size(Int32, BytesView)
+  /// Carries the sign-free view of a value outside the requested integer range.
   Overflow(BytesView)
+  /// Carries the valid prefix's unsigned magnitude, the index of the first
+  /// non-digit, and the sign-free input view for results up to 64 bits.
   Invalid64(UInt64, Int32, BytesView)
+  /// Carries the corresponding magnitude, byte index, and view for 128-bit
+  /// results. The magnitude is exact even when it exceeds 64 bits.
   Invalid128(UInt128, Int32, BytesView)
 }

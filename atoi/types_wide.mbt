@@ -1,5 +1,7 @@
 ///|
-/// Implements unsigned 128-bit decimal parsing without narrowing the result.
+/// Parses a value from zero through `2^128 - 1` using exact word arithmetic.
+/// Uses the thirty-nine-digit budget. Accepted signs, leading zeroes, and
+/// consumed bytes follow `Parse::parse_decimal`.
 pub impl Parse for UInt128 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -13,7 +15,9 @@ pub impl Parse for UInt128 with fn parse_decimal(
 }
 
 ///|
-/// Implements signed 128-bit decimal parsing using exact two's-complement bits.
+/// Parses a value from `-2^127` through `2^127 - 1` in two's complement.
+/// Uses the thirty-nine-digit budget and the bound selected by the sign.
+/// Prefix and leading-zero handling follow `Parse::parse_decimal`.
 pub impl Parse for Int128 with fn parse_decimal(
   data : BytesView,
   positive_only~ : Bool,
@@ -36,7 +40,9 @@ pub impl Parse for Int128 with fn parse_decimal(
 }
 
 ///|
-/// Implements sign-free negative 128-bit parsing, including the signed minimum.
+/// Parses sign-free digits as a value from `-2^127` through zero.
+/// Uses the thirty-nine-digit budget, with `skip_zeroes` controlling whether
+/// leading zeroes count toward it. Consumption follows `ParseNeg`.
 pub impl ParseNeg for Int128 with fn parse_negative_decimal(
   data : BytesView,
   prefix~ : Bool,
