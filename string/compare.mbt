@@ -38,10 +38,55 @@ fn equal_range(
   let left_start = text.start_offset() + start
   let right_start = other.start_offset()
   (physical_equal(left, right) && left_start == right_start) ||
+  compare_code_units(left, left_start, right, right_start, len)
+}
+
+///|
+/// Compares bounded UTF-16 ranges with core's backend-specific primitive.
+#cfg(not(any(target="wasm", target="js")))
+#inline
+fn compare_code_units(
+  left : String,
+  left_start : Int32,
+  right : String,
+  right_start : Int32,
+  len : Int32,
+) -> Bool {
   left.unsafe_range_equal(
     right,
     start=left_start,
     other_start=right_start,
     len~,
   )
+}
+
+///|
+/// Uses JavaScript string equality after comparing a short prefix of a long range.
+#cfg(target="js")
+#inline
+fn compare_code_units(
+  left : String,
+  left_start : Int32,
+  right : String,
+  right_start : Int32,
+  len : Int32,
+) -> Bool {
+  if len < 32 {
+    return left.unsafe_range_equal(
+      right,
+      start=left_start,
+      other_start=right_start,
+      len~,
+    )
+  }
+  // The callers bound both ranges. JavaScript substrings retain raw code units
+  // even when the range starts or ends inside a surrogate pair.
+  left.unsafe_range_equal(
+    right,
+    start=left_start,
+    other_start=right_start,
+    len=4,
+  ) &&
+  left.unsafe_substring(start=left_start, end=left_start + len) ==
+  right.unsafe_substring(start=right_start, end=right_start + len)
 }

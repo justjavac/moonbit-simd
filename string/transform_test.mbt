@@ -28,6 +28,22 @@ test "equality and prefix or suffix compare exact subview contents" {
 }
 
 ///|
+test "long equality compares raw surrogate units within view bounds" {
+  let body = "😀x".repeat(32)
+  let left = "!" + body + "?"
+  let right = "zz" + body + "y"
+  let changed = "zz" + "😀x".repeat(24) + "😁x" + "😀x".repeat(7) + "y"
+  let view = left.unsafe_view(start=2, end=95)
+  let same = right.unsafe_view(start=3, end=96)
+  let different = changed.unsafe_view(start=3, end=96)
+  assert_true(@string.equal(view, same))
+  assert_false(@string.equal(view, different))
+  assert_true(@string.has_prefix(left.unsafe_view(start=2, end=96), same))
+  assert_true(@string.has_suffix(left.unsafe_view(start=1, end=95), same))
+  assert_false(@string.has_suffix(left.unsafe_view(start=1, end=95), different))
+}
+
+///|
 test "split is lazy and preserves empty fields and borrowed view offsets" {
   let text = "x::a😀::::y"[1:10]
   let iter = @string.split(text, "::")
