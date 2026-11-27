@@ -1,0 +1,10 @@
+StringZilla v5.3.2
+Author: Ash Vardanian
+Repository: https://github.com/ashvardanian/StringZilla
+Revision: 3cd0f9bcab97912dd36ca4ca4253f1f46b33ef8e
+License: Apache License 2.0 (see LICENSE-APACHE)
+
+This module adapts portions of include/stringzilla/find/serial.h,
+include/stringzilla/find/v128.h, and include/stringzilla/compare/v128.h.
+The MoonBit port uses UTF-16 code units, bounds loads to each StringView,
+caps candidate verification work, and uses core-compatible return values.

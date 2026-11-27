@@ -1,0 +1,73 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "justjavac/string"
+
+import {
+  "moonbitlang/core/bigint",
+  "moonbitlang/core/builtin",
+}
+
+// Values
+pub fn contains(StringView, StringView) -> Bool
+
+pub fn equal(StringView, StringView) -> Bool
+
+pub fn find(StringView, StringView) -> Int32?
+
+pub fn find_code_unit(StringView, UInt16) -> Int32?
+
+pub fn[Self : @moonbitlang/core/string.FromStr] from_str(StringView) -> Self raise
+
+pub fn has_prefix(StringView, StringView) -> Bool
+
+pub fn has_suffix(StringView, StringView) -> Bool
+
+#label_migration(radix, alias=base, msg="Use radix= instead")
+pub fn parse_bigint(StringView, radix? : Int32) -> @bigint.BigInt raise
+
+pub fn parse_bool(StringView) -> Bool raise
+
+pub fn parse_double(StringView) -> Double raise
+
+#label_migration(radix, alias=base, msg="Use radix= instead")
+pub fn parse_int(StringView, radix? : Int32) -> Int32 raise
+
+#label_migration(radix, alias=base, msg="Use radix= instead")
+pub fn parse_int64(StringView, radix? : Int32) -> Int64 raise
+
+#label_migration(radix, alias=base, msg="Use radix= instead")
+pub fn parse_uint(StringView, radix? : Int32) -> UInt32 raise
+
+#label_migration(radix, alias=base, msg="Use radix= instead")
+pub fn parse_uint64(StringView, radix? : Int32) -> UInt64 raise
+
+pub fn replace(StringView, old~ : StringView, new~ : StringView) -> StringView
+
+pub fn replace_all(StringView, old~ : StringView, new~ : StringView) -> StringView
+
+pub fn rev_find(StringView, StringView) -> Int32?
+
+pub fn rev_find_code_unit(StringView, UInt16) -> Int32?
+
+pub fn rev_split_once(StringView, StringView) -> (StringView, StringView)?
+
+pub fn split(StringView, StringView) -> Iter[StringView]
+
+pub fn split_once(StringView, StringView) -> (StringView, StringView)?
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub using @moonbitlang/core/string {type MatchResult}
+
+pub using @moonbitlang/core/string {type Regex}
+
+#deprecated
+pub using @builtin {type StringView as View}
+
+pub using @moonbitlang/core/string {trait FromStr}
+
+pub using @builtin {trait ToStringView}
+
+// Traits
