@@ -35,7 +35,7 @@ async fn main {
   for module_dir in directories {
     guard [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
-      "wc", "bytecount",
+      "wc", "bytecount", "string",
     ].contains(module_dir) else {
       fail("Expected a configured workspace library: " + module_dir)
     }
@@ -69,7 +69,7 @@ async fn main {
         command.push(path)
       }
       command.push("\{prefix}.trace.source")
-      if module_dir != "bytecount" {
+      if !["bytecount", "string"].contains(module_dir) {
         command.push("\{prefix}.whitebox_test.trace.source")
       }
       command.push("\{prefix}.internal_test.trace.source")

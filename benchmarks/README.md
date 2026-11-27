@@ -1,5 +1,10 @@
 # Development benchmarks
 
+The [StringZilla adapters](string) compare matching port and core
+`StringView` operations on prepared UTF-16 views. See the
+[StringZilla report](../string/BENCHMARK.md) for workloads, reproduction
+commands, and runner context.
+
 The [bytecount adapters](bytecount) compare dispatched and byte-wise counts
 on the same prepared views. The byte-match workload also measures
 `@memchr.memchr_iter(...).count()`, including cursor creation. See the

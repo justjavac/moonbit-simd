@@ -8,7 +8,7 @@ larger string.
 ## Installation
 
 ```text
-moon add justjavac/string@0.1.0
+moon add justjavac/string@0.1.1
 ```
 
 ```moonbit

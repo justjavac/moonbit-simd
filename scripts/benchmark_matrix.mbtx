@@ -85,7 +85,10 @@ fn matrix(libraries : ArrayView[String]) -> Json {
 ///|
 /// Checks path routing, documentation-only exclusions, shared sources, and matrix isolation.
 fn self_test() -> Unit raise {
-  let libraries = ["crc32", "url", "utf8", "wc", "memchr", "bytecount"]
+  let libraries = [
+    "crc32", "url", "utf8", "wc", "memchr", "bytecount", "string",
+  ]
+  assert_eq(affected(libraries, ["benchmarks/string/moon.pkg"]), ["string"])
   assert_eq(affected(libraries, ["bytecount/vector.mbt"]), ["bytecount"])
   assert_eq(affected(libraries, ["memchr/vector.mbt"]), ["memchr", "bytecount"])
   assert_eq(

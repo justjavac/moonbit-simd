@@ -12,4 +12,5 @@ members = [
   "../memchr",
   "../wc",
   "../bytecount",
+  "../string",
 ]
