@@ -837,6 +837,76 @@ fn validate_bytecount_inventory(records : Array[Json]) -> Unit raise {
 }
 
 ///|
+/// Lists the exact StringZilla workloads with UTF-16 and UTF-8 input sizes.
+fn string_inventory() -> Map[String, Json] {
+  let cases : Map[String, Json] = Map([])
+  for
+    (workload, units, offset, needle, utf8_bytes) in [
+      ("find-short", 15, 0, 2, 15),
+      ("find-late", 65536, 1, 4, 65538),
+      ("rev-find-early", 65536, 3, 4, 65538),
+      ("find-periodic", 4096, 0, 65, 4096),
+      ("rev-find-periodic", 4096, 0, 65, 4096),
+      ("find-unit-late", 4096, 1, 1, 4098),
+      ("rev-find-unit-miss", 4096, 1, 1, 4098),
+      ("equal-long", 65536, 1, 65536, 98304),
+      ("split-sparse", 4096, 1, 2, 4096),
+      ("replace-all-sparse", 4096, 1, 2, 4096),
+    ] {
+    for implementation in ["ours", "core"] {
+      cases["\{workload}:\{implementation}:\{units}:\{offset}"] = {
+        "input_code_units": units,
+        "input_utf8_bytes": utf8_bytes,
+        "input_utf16_storage_bytes": units * 2,
+        "input_offset": offset,
+        "needle_code_units": needle,
+      }
+    }
+  }
+  cases
+}
+
+///|
+/// Rejects missing, duplicate, or changed cases before attaching text metadata.
+fn annotate_string(records : Array[Json]) -> Unit raise {
+  let expected = string_inventory()
+  guard records.length() == expected.length() else {
+    fail("Expected the complete 20-case StringZilla inventory")
+  }
+  for record in records {
+    guard record is Object(fields) &&
+      fields.get("name") is Some(String(name)) &&
+      expected.get(name) is Some(Object(metadata)) else {
+      fail("Unexpected or duplicate StringZilla benchmark")
+    }
+    expected.remove(name)
+    for (key, value) in metadata {
+      guard fields.get(key) is None || fields.get(key) == Some(value) else {
+        fail("Changed StringZilla metadata: " + name + "/" + key)
+      }
+      fields[key] = value
+    }
+  }
+}
+
+///|
+/// Checks the collector's rejection of missing and substituted text workloads.
+fn string_inventory_self_test() -> Unit raise {
+  let cases : Array[Json] = []
+  for (name, _) in string_inventory() {
+    cases.push({ "name": name })
+  }
+  assert_eq(cases.length(), 20)
+  annotate_string(cases)
+  wc_must_reject(() => annotate_string(cases[:19].to_owned()))
+  let changed = cases.copy()
+  changed[0] = { "name": "find-short:ours:15:1" }
+  wc_must_reject(() => annotate_string(changed))
+  changed[0] = cases[1]
+  wc_must_reject(() => annotate_string(changed))
+}
+
+///|
 /// Runs each backend sequentially and writes reproducible result and log artifacts.
 async fn main {
   let arguments = @env.args()
@@ -844,6 +914,7 @@ async fn main {
     assert_eq(expected_ryu_names().length(), 85)
     assert_eq(expected_memchr_names().length(), 370)
     wc_inventory_self_test()
+    string_inventory_self_test()
     assert_eq(bytecount_inventory().length(), 30)
     let bytecount_cases = bytecount_inventory()
       .iter()
@@ -873,7 +944,7 @@ async fn main {
   let selected_modules = if requested == ["all"] {
     [
       "crc32", "url", "utf8", "base64", "atoi", "argminmax", "uuid", "ryu", "memchr",
-      "wc", "bytecount",
+      "wc", "bytecount", "string",
     ]
   } else {
     requested
@@ -911,6 +982,10 @@ async fn main {
       (
         package_dir == "bytecount" &&
         environment("BYTECOUNT_BENCHMARK_REVERSE") == "1"
+      ) ||
+      (
+        package_dir == "string" &&
+        environment("STRING_BENCHMARK_REVERSE") == "1"
       )
     let log_directory = "\{directory}/\{os}" +
       (if reversed { "-reversed" } else { "" })
@@ -955,6 +1030,7 @@ async fn main {
       } else if package_dir == "atoi" ||
         package_dir == "argminmax" ||
         package_dir == "wc" ||
+        package_dir == "string" ||
         package_dir == "bytecount" {
         [
           "-C",
@@ -1011,6 +1087,9 @@ async fn main {
       }
       if package_dir == "wc" {
         annotate_wc(records)
+      }
+      if package_dir == "string" {
+        annotate_string(records)
       }
       if package_dir == "bytecount" {
         validate_bytecount_inventory(records)
@@ -1112,6 +1191,16 @@ async fn main {
             "version": "0.1.1",
             "license": "MIT",
             "api": "memchr_iter(needle, data).count() on the same view",
+          },
+        ]
+      } else if package_dir == "string" {
+        [
+          {
+            "label": "core",
+            "package": "moonbitlang/core/builtin",
+            "version": "bundled with recorded moonc",
+            "license": "Apache-2.0",
+            "api": "StringView search, equality, split, and replace_all",
           },
         ]
       } else if package_dir == "wc" {
@@ -1339,6 +1428,15 @@ async fn main {
           "license": "MIT",
           "timed": false,
         }
+      } else if package_dir == "string" {
+        {
+          "package": "StringZilla",
+          "repository": "https://github.com/ashvardanian/StringZilla",
+          "revision": "3cd0f9bcab97912dd36ca4ca4253f1f46b33ef8e",
+          "version": "5.3.2",
+          "license": "Apache-2.0",
+          "timed": false,
+        }
       } else if package_dir == "wc" {
         {
           "package": "fastlwc",
@@ -1391,6 +1489,18 @@ async fn main {
           "offset_unit": "bytes",
           "prepared": "Immutable repeated UTF-8 bytes, bounded views, and spaces as sentinels",
           "timed": "Public calls, memchr cursor construction, callback dispatch, and keep barriers",
+          "measurement_order": if reversed {
+            "reversed"
+          } else {
+            "forward"
+          },
+        }
+      } else if package_dir == "string" {
+        {
+          "cases_per_backend": 20,
+          "offset_unit": "utf16_code_unit",
+          "prepared": "Shared immutable StringViews with sentinel backing on partial inputs",
+          "timed": "Public calls, iteration, replacement allocation, callback dispatch, and keep barriers",
           "measurement_order": if reversed {
             "reversed"
           } else {
@@ -1455,7 +1565,7 @@ async fn main {
       },
       "backends": Json(backends),
     }
-    let record_name = if (package_dir == "wc" || package_dir == "bytecount") &&
+    let record_name = if ["wc", "bytecount", "string"].contains(package_dir) &&
       run_id == "" {
       os +
       (if targets.length() == 1 { "-" + targets[0] } else { "" }) +

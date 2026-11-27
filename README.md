@@ -26,6 +26,7 @@ for installation, APIs, and examples; [moon.work](moon.work) links local sources
 | [justjavac/memchr](memchr/README.md) | Byte and substring search, finders, iteration | [Results](memchr/BENCHMARK.md) |
 | [justjavac/wc](wc/README.md) | LF, ASCII-delimited words, and byte counts with streaming | [Results](wc/BENCHMARK.md) |
 | [justjavac/bytecount](bytecount/README.md) | Occurrences of a byte and UTF-8 code point counts | [Benchmarks](bytecount/BENCHMARK.md) |
+| [justjavac/string](string/README.md) | StringZilla UTF-16 search, comparison, split, and replacement | [Benchmarks](string/BENCHMARK.md) |
 
 ## Portability
 

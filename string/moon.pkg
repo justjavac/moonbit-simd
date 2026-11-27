@@ -1,0 +1,16 @@
+import {
+  "moonbitlang/core/simd",
+  "moonbitlang/core/string" @core_string,
+}
+
+import {
+  "moonbitlang/core/string" @core_string,
+} for "test"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/simd" ],
+)
+
+// The SIMD import is used only by the linear-memory backends.
+
+warnings = "-alert_experimental-unused_package"

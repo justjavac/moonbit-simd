@@ -252,6 +252,20 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
       fail("Missing word-count release command or UTC timestamps")
     }
   }
+  if package_dir == "string" {
+    validate_string_inventory(summaries)
+    let started = text(value, "started_at_utc")
+    let finished = text(value, "finished_at_utc")
+    guard text(value, "command") ==
+      "moon -C benchmarks bench --target \{backend} --release --no-parallelize -p justjavac/benchmarks/string" &&
+      started.length() == 20 &&
+      finished.length() == 20 &&
+      started.has_suffix("Z") &&
+      finished.has_suffix("Z") &&
+      started <= finished else {
+      fail("Missing StringZilla release command or UTC timestamps")
+    }
+  }
   if package_dir == "bytecount" {
     validate_bytecount_inventory(summaries)
     let started = text(value, "started_at_utc")
@@ -272,7 +286,7 @@ fn validate_backend(value : Json, package_dir : String) -> Unit raise {
     let _ = case_parts(summary)
     guard !names.contains(name) else { fail("Duplicate benchmark: \{name}") }
     names[name] = ()
-    if ["atoi", "wc", "bytecount"].contains(package_dir) {
+    if ["atoi", "wc", "bytecount", "string"].contains(package_dir) {
       validate_distribution(summary)
     }
     if package_dir == "argminmax" {
@@ -774,6 +788,21 @@ fn validate_snapshot(records : Array[Json], package_dir : String) -> Unit raise 
         fail("Mixed bytecount manifests, toolchains, or measurement order")
       }
     }
+    if package_dir == "string" {
+      validate_string_record(record)
+      guard @string.parse_int(text(record, "run_attempt")) > 0 &&
+        field(record, "working_tree_dirty") == Json(false) &&
+        field(record, "workload_metadata") == field(first, "workload_metadata") &&
+        toolchain_versions(text(record, "toolchain")) ==
+        toolchain_versions(text(first, "toolchain")) &&
+        text(record, "node") == text(first, "node") &&
+        text(record, "module_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "module_manifest").replace_all(old="\r\n", new="\n") &&
+        text(record, "comparison_manifest").replace_all(old="\r\n", new="\n") ==
+        text(first, "comparison_manifest").replace_all(old="\r\n", new="\n") else {
+        fail("Mixed StringZilla manifests, toolchains, or measurement order")
+      }
+    }
     if package_dir == "wc" {
       validate_wc_record(record)
       let attempt = @string.parse_int(text(record, "run_attempt"))
@@ -1111,6 +1140,9 @@ fn report(package_dir : String, records : Array[Json]) -> String raise {
   validate_snapshot(records, package_dir)
   if package_dir == "bytecount" {
     return bytecount_report(records)
+  }
+  if package_dir == "string" {
+    return string_report(records)
   }
   if package_dir == "wc" {
     return wc_report(records)
@@ -3420,6 +3452,195 @@ fn bytecount_report_self_test() -> Unit raise {
 }
 
 ///|
+/// Describes every measured operation, size, needle and view offset independently of the collector.
+fn string_workloads() -> Array[(String, Int32, Int32, Int32, Int32)] {
+  [
+    ("find-short", 15, 0, 2, 15),
+    ("find-late", 65536, 1, 4, 65538),
+    ("rev-find-early", 65536, 3, 4, 65538),
+    ("find-periodic", 4096, 0, 65, 4096),
+    ("rev-find-periodic", 4096, 0, 65, 4096),
+    ("find-unit-late", 4096, 1, 1, 4098),
+    ("rev-find-unit-miss", 4096, 1, 1, 4098),
+    ("equal-long", 65536, 1, 65536, 98304),
+    ("split-sparse", 4096, 1, 2, 4096),
+    ("replace-all-sparse", 4096, 1, 2, 4096),
+  ]
+}
+
+///|
+/// Checks complete and unique names and each workload's unambiguous text sizes.
+fn validate_string_inventory(summaries : Array[Json]) -> Unit raise {
+  let expected : Map[String, (Int32, Int32, Int32, Int32)] = Map([])
+  for (name, units, offset, needle, utf8_bytes) in string_workloads() {
+    for implementation in ["ours", "core"] {
+      expected["\{name}:\{implementation}:\{units}:\{offset}"] = (
+        units, offset, needle, utf8_bytes,
+      )
+    }
+  }
+  guard summaries.length() == expected.length() else {
+    fail("Expected all 20 StringZilla measurements")
+  }
+  for summary in summaries {
+    let name = text(summary, "name")
+    guard expected.get(name) is Some((units, offset, needle, utf8_bytes)) &&
+      number(summary, "input_code_units") == units.to_double() &&
+      number(summary, "input_offset") == offset.to_double() &&
+      number(summary, "needle_code_units") == needle.to_double() &&
+      number(summary, "input_utf8_bytes") == utf8_bytes.to_double() &&
+      number(summary, "input_utf16_storage_bytes") == (units * 2).to_double() else {
+      fail("Unexpected, duplicate, or changed StringZilla workload: " + name)
+    }
+    expected.remove(name)
+  }
+}
+
+///|
+/// Checks the StringZilla pin and the public core baseline.
+fn validate_string_record(record : Json) -> Unit raise {
+  let upstream = field(record, "ported_upstream")
+  guard upstream
+    is {
+      "package": "StringZilla",
+      "repository": "https://github.com/ashvardanian/StringZilla",
+      "revision": "3cd0f9bcab97912dd36ca4ca4253f1f46b33ef8e",
+      "version": "5.3.2",
+      "license": "Apache-2.0",
+      "timed": False,
+      ..
+    } else {
+    fail("Unexpected StringZilla source provenance")
+  }
+  guard array(record, "comparison_dependencies")
+    is [
+      {
+        "label": "core",
+        "package": "moonbitlang/core/builtin",
+        "version": "bundled with recorded moonc",
+        "license": "Apache-2.0",
+        "api": "StringView search, equality, split, and replace_all",
+        ..
+      },
+    ] else {
+    fail("Missing bundled core comparison")
+  }
+  let metadata = field(record, "workload_metadata")
+  guard number(metadata, "cases_per_backend") == 20 &&
+    text(metadata, "offset_unit") == "utf16_code_unit" &&
+    ["forward", "reversed"].contains(text(metadata, "measurement_order")) &&
+    text(field(record, "cpu"), "architecture") != "" &&
+    text(record, "toolchain") != "" else {
+    fail("Missing StringZilla workload or runner metadata")
+  }
+}
+
+///|
+/// Validates one explicitly local result, including partial backend runs.
+fn validate_local_string(record : Json) -> Unit raise {
+  guard text(record, "source") == "local" &&
+    text(record, "module") == "justjavac/string" &&
+    ["linux", "macos", "windows"].contains(text(record, "os")) else {
+    fail("Expected local justjavac/string data")
+  }
+  validate_string_record(record)
+  let backends = array(record, "backends")
+  guard !backends.is_empty() else { fail("Missing local StringZilla results") }
+  let seen : Map[String, Unit] = Map([])
+  for backend in backends {
+    let name = text(backend, "backend")
+    guard !seen.contains(name) else {
+      fail("Duplicate local StringZilla backend")
+    }
+    seen[name] = ()
+    validate_backend(backend, "string")
+  }
+}
+
+///|
+/// Renders representative complete-operation latencies against the matching core calls.
+fn string_report(
+  records : Array[Json],
+  is_local~ : Bool = false,
+) -> String raise {
+  let first = records[0]
+  let builder = StringBuilder()
+  builder.write_string("# StringZilla UTF-16 performance\n\n")
+  if is_local {
+    let order = text(field(first, "workload_metadata"), "measurement_order")
+    builder.write_string("Local measurements in \{order} order.\n\n")
+  } else {
+    let run = text(first, "run_id")
+    let revision = text(first, "source_commit")
+    let repository = text(first, "repository")
+    builder.write_string(
+      "Attempt \{text(first, "run_attempt")} of [CI run \{run}](\{text(first, "run_url")}) measured [\{revision[:7]}](https://github.com/\{repository}/commit/\{revision}).\n\n",
+    )
+    builder.write_string(
+      "Three systems, four backends, and 20 cases per backend. [Full data](BENCHMARK-DATA.json) retains all 240 measurements.\n\n",
+    )
+  }
+  builder.write_string(
+    "Both implementations use the same prepared StringViews. Timings include complete iterator consumption and replacement allocation where applicable. Results are nanoseconds per public operation. An asterisk marks CV ≥ 5%.\n\n| OS / backend | Workload | Code units | Port | Core |\n| --- | --- | ---: | ---: | ---: |\n",
+  )
+  for record in records {
+    let os = text(record, "os")
+    for backend in array(record, "backends") {
+      let target = text(backend, "backend")
+      let cases = index(backend)
+      for (name, units, offset, _, _) in string_workloads() {
+        guard [
+          "find-short", "find-late", "find-periodic", "equal-long", "replace-all-sparse",
+        ].contains(name) else {
+          continue
+        }
+        let ours = metric(cases["\{name}:ours:\{units}:\{offset}"], "ns", 0.0)
+        let core = metric(cases["\{name}:core:\{units}:\{offset}"], "ns", 0.0)
+        builder.write_string(
+          "| \{os} / \{target} | \{name} | \{units} | \{ours} | \{core} |\n",
+        )
+      }
+    }
+  }
+  builder.write_string("\n## Runners\n\n")
+  for record in records {
+    let cpu = field(record, "cpu")
+    builder.write_string(
+      "- \{text(record, "os")} · \{cell(text(cpu, "model"))} (\{cell(text(cpu, "architecture"))})\n",
+    )
+  }
+  builder.write_string(
+    "\n```text\n\{toolchain_versions(text(first, "toolchain"))}\n```\n",
+  )
+  builder.to_string()
+}
+
+///|
+/// Exercises exact text metadata validation and rejection of duplicate cases.
+fn string_report_self_test() -> Unit raise {
+  let cases : Array[Json] = []
+  for (name, units, offset, needle, utf8_bytes) in string_workloads() {
+    for implementation in ["ours", "core"] {
+      cases.push({
+        "name": "\{name}:\{implementation}:\{units}:\{offset}",
+        "input_code_units": units,
+        "input_offset": offset,
+        "needle_code_units": needle,
+        "input_utf8_bytes": utf8_bytes,
+        "input_utf16_storage_bytes": units * 2,
+      })
+    }
+  }
+  validate_string_inventory(cases)
+  must_reject(() => validate_string_inventory(cases[:19].to_owned()))
+  let substitutions = cases.copy()
+  substitutions[0] = changed(cases[0], "input_utf8_bytes", 0)
+  must_reject(() => validate_string_inventory(substitutions))
+  substitutions[0] = cases[1]
+  must_reject(() => validate_string_inventory(substitutions))
+}
+
+///|
 /// Writes one uppercase BENCHMARK.md and its complete JSON snapshot per module.
 async fn main {
   let arguments = @env.args()
@@ -3428,6 +3649,7 @@ async fn main {
     ryu_report(["--self-test"])
     memchr_report(["--self-test"])
     bytecount_report_self_test()
+    string_report_self_test()
     println("Benchmark report self-test passed")
     return
   }
@@ -3440,11 +3662,11 @@ async fn main {
       ryu_report(["--local", arguments[3], arguments[4]])
       return
     }
-    guard ["atoi", "utf8", "argminmax", "wc", "bytecount"].contains(
+    guard ["atoi", "utf8", "argminmax", "wc", "bytecount", "string"].contains(
       arguments[2],
     ) else {
       fail(
-        "Local rendering supports integer, UTF-8, extrema, word-count, and bytecount artifacts",
+        "Local rendering supports integer, UTF-8, extrema, word-count, bytecount, and string artifacts",
       )
     }
     let record = @json.parse(@fs.read_text(arguments[3]))
@@ -3460,6 +3682,9 @@ async fn main {
     } else if arguments[2] == "bytecount" {
       validate_local_bytecount(record)
       bytecount_report([record], is_local=true)
+    } else if arguments[2] == "string" {
+      validate_local_string(record)
+      string_report([record], is_local=true)
     } else {
       validate_local_atoi(record)
       atoi_report([record], is_local=true)

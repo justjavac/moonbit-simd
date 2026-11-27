@@ -20,6 +20,7 @@ on:
           - memchr
           - wc
           - bytecount
+          - string
   push:
     branches: [main]
     paths:

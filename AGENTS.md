@@ -299,7 +299,7 @@ moon test --target all
 moon info
 moon fmt
 moon test --target native --enable-coverage
-moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi argminmax uuid ryu memchr wc bytecount
+moon run scripts/coverage_report.mbtx local crc32 url utf8 base64 atoi argminmax uuid ryu memchr wc bytecount string
 ```
 
 For comparison changes, also run `moon -C benchmarks check --target all --deny-warn`,
