@@ -24,6 +24,24 @@ assert_eq(@string.rev_find_code_unit(text, 0xDE00), Some(2))
 assert_eq(@string.replace_all(text, old="::", new=" / "), "猫😀 / 犬")
 ```
 
+## Performance
+
+In the 0.1.1 Linux, macOS, and Windows CI comparison with MoonBit core,
+`find` on a 65,536-code-unit view with a match at the end was **17–32% faster
+on native** and **11–31% faster on Wasm**. On the 4,096-code-unit periodic
+miss, the extra needle probe made `find` **29–58× as fast** across these
+two backends. The largest gains depend on the input pattern, and some
+measurements had a coefficient of variation of at least 5%.
+[Benchmarks](BENCHMARK.md)
+
+In a local Linux release build, JavaScript `equal` compared two equal
+65,536-code-unit subviews in 2.0–2.1 µs, **67–70× as fast as core** across
+both measurement orders. Core's range comparison scans one code unit at a
+time. The engine can compare the bounded substrings in bulk. On Wasm,
+delegating two-unit needles to core skips redundant probes and exact-match
+verification. In the same local comparison, 4,096-unit sparse splitting and
+replacement ran **1.45–1.60× as fast as 0.1.1**.
+
 ## API compatibility
 
 The search and text operations are package functions. Change a method call
@@ -64,14 +82,17 @@ available on the same `String` and `StringView` values.
   linear fallback bounds the worst-case search by the sum of the input and
   needle lengths.
 - Linear-memory Wasm equality combines four eight-lane XOR comparisons.
-  Core handles native range equality and short ranges. Every SIMD load
-  stays within the original view, including views at odd code-unit offsets.
+  JavaScript uses the engine's string comparison for ranges of 32 code units
+  or more and checks the first four units before forming substrings. Every
+  comparison is bounded by the original views, including boundaries inside
+  surrogate pairs.
 
 | Backend | Dispatch |
 | --- | --- |
 | `native` | V128 searches from 32 code units for a single unit and 16 complete starts for a substring. Substring blocks grow from 16 to 32 starts when there are at least 64 candidates. Core handles two-unit needles below 64 starts, shorter input, tails, and equality. |
-| `wasm` | The same V128 search thresholds, with grouped equality starting at 32 units. The Wasm host must support SIMD. |
-| `wasm-gc`, `js` | Core search and equality paths for those backends. |
+| `wasm` | The same V128 search thresholds, with two-unit needles delegated to core and grouped equality starting at 32 units. The Wasm host must support SIMD. |
+| `wasm-gc` | Core search and range equality. |
+| `js` | Core search and short range equality. Long ranges use bounded JavaScript string comparison. |
 
 The API is tested on Linux with native, Wasm, Wasm GC, and JavaScript using
 `moon 0.1.20261126` and `moonc v1.0.0-rc1+546870549-nightly`. Workspace CI

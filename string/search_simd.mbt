@@ -129,6 +129,16 @@ fn candidate_mask(
 }
 
 ///|
+/// Keeps the native filter for long searches with a two-unit needle.
+#cfg(target="native")
+const SIMD_TWO_UNIT_SEARCH = true
+
+///|
+/// Uses core's two-anchor search for two-unit needles on Wasm.
+#cfg(target="wasm")
+const SIMD_TWO_UNIT_SEARCH = false
+
+///|
 /// Scans complete candidate windows with three probes and verifies every surviving lane.
 ///
 /// Adapted from StringZilla v5.3.2 find/v128.h by Ash Vardanian (Apache-2.0).
@@ -142,7 +152,7 @@ fn find_substring(
   let len = text.length()
   let needle_len = needle.length()
   let candidates = len - needle_len + 1
-  if needle_len == 2 && candidates < 64 {
+  if needle_len == 2 && (!SIMD_TWO_UNIT_SEARCH || candidates < 64) {
     return if reverse { text.rev_find(needle) } else { text.find(needle) }
   }
   let data = text.data()

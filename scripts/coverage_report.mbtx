@@ -1,20 +1,83 @@
 ----
 import {
   "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
   "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
 }
 ----
 
 ///|
-/// Exports native trace metadata, optionally selecting one current runtime log.
+/// Exports filtered Cobertura from an explicit set of trace files and runtime logs.
+async fn export_report(
+  package_path : String,
+  prefix : String,
+  report : String,
+  runtime_logs : Array[String],
+  whitebox~ : Bool,
+) -> Unit {
+  let command = [
+    "coverage",
+    "report",
+    "--",
+    "--no-ignore-missing-files",
+    "-p",
+    "justjavac/\{package_path}",
+    "-f",
+    "cobertura",
+    "-o",
+    report,
+  ]
+  for path in runtime_logs {
+    command.push("-t")
+    command.push(path)
+  }
+  command.push("\{prefix}.trace.source")
+  if whitebox {
+    command.push("\{prefix}.whitebox_test.trace.source")
+  }
+  command.push("\{prefix}.internal_test.trace.source")
+  let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
+  guard output.exit_code() == 0 else { fail(output.stdout() + output.stderr()) }
+  println("Generated \{report}")
+}
+
+///|
+/// Exports the JavaScript StringZilla tests from their isolated build directory.
+async fn export_string_js(flag : String) -> Unit {
+  let directory = "_build/string-js-coverage"
+  let logs = @fs.readdir(directory, sort=true)
+    .filter(name => {
+      name.has_prefix("moonbit_coverage_") && name.has_suffix(".txt")
+    })
+    .map(name => directory + "/" + name)
+  guard !logs.is_empty() else {
+    fail("No JavaScript string coverage logs found")
+  }
+  export_report(
+    "string",
+    directory + "/js/debug/test/justjavac/string/string",
+    "coverage-string-js-\{flag}.xml",
+    logs,
+    whitebox=false,
+  )
+}
+
+///|
+/// Exports native workspace coverage or the supplemental JavaScript string report.
 async fn main {
   let args = @env.args()
   guard args.length() >= 3 &&
     ["linux", "macos", "windows", "local"].contains(args[1]) else {
-    fail("Usage: moon run scripts/coverage_report.mbtx <OS flag> <module>...")
+    fail(
+      "Usage: moon run scripts/coverage_report.mbtx <OS flag> <module>... | --string-js",
+    )
   }
   let flag = args[1]
+  if args.length() == 3 && args[2] == "--string-js" {
+    export_string_js(flag)
+    return
+  }
   let directories : Array[String] = []
   let mut runtime_log : String? = None
   for index = 2; index < args.length(); {
@@ -52,32 +115,17 @@ async fn main {
       }
       let prefix = "_build/native/debug/test/justjavac/\{package_path}/\{file_name}"
       let report = "coverage-\{report_name}-\{flag}.xml"
-      let command = [
-        "coverage",
-        "report",
-        "--",
-        "--no-ignore-missing-files",
-        "-p",
-        "justjavac/\{package_path}",
-        "-f",
-        "cobertura",
-        "-o",
+      let logs = match runtime_log {
+        Some(path) => [path]
+        None => []
+      }
+      export_report(
+        package_path,
+        prefix,
         report,
-      ]
-      if runtime_log is Some(path) {
-        command.push("-t")
-        command.push(path)
-      }
-      command.push("\{prefix}.trace.source")
-      if !["bytecount", "string"].contains(module_dir) {
-        command.push("\{prefix}.whitebox_test.trace.source")
-      }
-      command.push("\{prefix}.internal_test.trace.source")
-      let output = @shell.Cmd("moon", command).output(max_output_bytes=2097152)
-      guard output.exit_code() == 0 else {
-        fail(output.stdout() + output.stderr())
-      }
-      println("Generated \{report} from native coverage")
+        logs,
+        whitebox=!["bytecount", "string"].contains(module_dir),
+      )
     }
   }
 }

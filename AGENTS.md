@@ -228,6 +228,10 @@ revalidate APIs, fallbacks, and benchmark assumptions after toolchain changes.
 - Run supported-backend correctness tests on each OS, then run native tests
   with `--enable-coverage`. Use `scripts/coverage_report.mbtx` to export filtered
   native Cobertura reports, matching the current CI workflow.
+- For the JavaScript string kernel, CI also runs instrumented tests in
+  `_build/string-js-coverage` and exports a separate report with
+  `moon run scripts/coverage_report.mbtx <OS flag> --string-js`. This mode
+  selects runtime logs from the isolated build directory.
 - The coverage exporter passes native `.trace.source` files explicitly.
   Automatic metadata discovery can mix built backends or search for unrelated
   files. Coverage reporter options such as `-p` belong after `moon coverage report --`.
