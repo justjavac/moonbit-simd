@@ -26,21 +26,18 @@ assert_eq(@string.replace_all(text, old="::", new=" / "), "猫😀 / 犬")
 
 ## Performance
 
-In the 0.1.1 Linux, macOS, and Windows CI comparison with MoonBit core,
-`find` on a 65,536-code-unit view with a match at the end was **17–32% faster
-on native** and **11–31% faster on Wasm**. On the 4,096-code-unit periodic
-miss, the extra needle probe made `find` **29–58× as fast** across these
-two backends. The largest gains depend on the input pattern, and some
-measurements had a coefficient of variation of at least 5%.
-[Benchmarks](BENCHMARK.md)
+In current-source CI on Linux, macOS, and Windows, `find` with a match at the end of a
+65,536-code-unit view was **21–41% faster than MoonBit core on native** and
+**22–63% faster on linear-memory Wasm**. On the 4,096-code-unit periodic miss,
+the additional probe made `find` **30–60× as fast** across those two backends.
+JavaScript `equal` on two equal 65,536-code-unit subviews was **36–77× as
+fast as core**. These results are workload-specific, and some runs had a
+coefficient of variation of at least 5%. [Benchmarks](BENCHMARK.md)
 
-In a local Linux release build, JavaScript `equal` compared two equal
-65,536-code-unit subviews in 2.0–2.1 µs, **67–70× as fast as core** across
-both measurement orders. Core's range comparison scans one code unit at a
-time. The engine can compare the bounded substrings in bulk. On Wasm,
-delegating two-unit needles to core skips redundant probes and exact-match
-verification. In the same local comparison, 4,096-unit sparse splitting and
-replacement ran **1.45–1.60× as fast as 0.1.1**.
+Delegating two-code-unit Wasm searches to core avoids redundant probes and
+full candidate verification. In a local Linux release build, 4,096-code-unit
+sparse splitting and replacement were **1.45–1.60× as fast as 0.1.1** across
+both measurement orders.
 
 ## API compatibility
 

@@ -5,8 +5,8 @@ signatures and UTF-16 offsets. Long searches on native and linear-memory Wasm
 screen 32 candidates at a time, using up to three probes to reject repetitive
 candidates before exact matching.
 
-In the 0.1.1 CI comparison, a 65,536-code-unit search with a match at the
-end was 17–32% faster than MoonBit core on native and 11–31% faster on Wasm.
+In CI, a 65,536-code-unit search with a match at the end was 21–41% faster
+than MoonBit core on native and 22–63% faster on linear-memory Wasm.
 [Guide](README.md) · [Benchmarks](BENCHMARK.md)
 
 ```mbt check
