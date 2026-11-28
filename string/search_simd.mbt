@@ -105,10 +105,29 @@ fn needle_probes(needle : StringView) -> (Int32, Int32, Int32) {
 }
 
 ///|
-/// Applies the remaining probes and packs the two comparison masks in lane order.
+/// Intersects the final probe with two partially filtered masks and packs their lanes.
 #cfg(any(target="native", target="wasm"))
 #inline
 fn candidate_mask(
+  data : String,
+  last : Int32,
+  last_key : V128,
+  low_matches : V128,
+  high_matches : V128,
+) -> Int32 {
+  let low = @simd.v128_and_(low_matches, match_units(data, last, last_key))
+  let high = @simd.v128_and_(
+    high_matches,
+    match_units(data, last + 8, last_key),
+  )
+  @simd.i8x16_bitmask(@simd.i8x16_narrow_i16x8_s(low, high))
+}
+
+///|
+/// Applies the two remaining probes when only one half of a block has hits.
+#cfg(any(target="native", target="wasm"))
+#inline
+fn filter_half(
   data : String,
   middle : Int32,
   last : Int32,
@@ -117,15 +136,13 @@ fn candidate_mask(
   first_low : V128,
   first_high : V128,
 ) -> Int32 {
-  let low = @simd.v128_and_(
+  candidate_mask(
+    data,
+    last,
+    last_key,
     @simd.v128_and_(first_low, match_units(data, middle, middle_key)),
-    match_units(data, last, last_key),
-  )
-  let high = @simd.v128_and_(
     @simd.v128_and_(first_high, match_units(data, middle + 8, middle_key)),
-    match_units(data, last + 8, last_key),
   )
-  @simd.i8x16_bitmask(@simd.i8x16_narrow_i16x8_s(low, high))
 }
 
 ///|
@@ -165,8 +182,16 @@ fn find_substring(
     return Some(edge)
   }
   let first_key = @simd.i16x8_splat(first_code)
-  let middle_key = @simd.i16x8_splat(needle.unsafe_get(middle))
-  let last_key = @simd.i16x8_splat(needle.unsafe_get(last))
+  let middle_code = needle.unsafe_get(middle)
+  let last_code = needle.unsafe_get(last)
+  // A repeated middle code unit can preserve many of the leading matches.
+  let (middle, last, middle_code, last_code) = if middle_code == first_code {
+    (last, middle, last_code, middle_code)
+  } else {
+    (middle, last, middle_code, last_code)
+  }
+  let middle_key = @simd.i16x8_splat(middle_code)
+  let last_key = @simd.i16x8_splat(last_code)
   let mut failures = 0
   let step = if candidates >= 64 { 32 } else { 16 }
   let scanned = for scanned = 0
@@ -185,10 +210,19 @@ fn find_substring(
       if @simd.i8x16_bitmask(@simd.v128_or_(first_pair, second_pair)) == 0 {
         continue
       }
-      let first_mask = if @simd.i8x16_bitmask(first_pair) == 0 {
-        0
-      } else {
-        candidate_mask(
+      if @simd.i8x16_bitmask(first_pair) == 0 {
+        filter_half(
+          data,
+          base + middle + 16,
+          base + last + 16,
+          middle_key,
+          last_key,
+          second_low,
+          second_high,
+        ) <<
+        16
+      } else if @simd.i8x16_bitmask(second_pair) == 0 {
+        filter_half(
           data,
           base + middle,
           base + last,
@@ -197,26 +231,52 @@ fn find_substring(
           first_low,
           first_high,
         )
-      }
-      let second_mask = if @simd.i8x16_bitmask(second_pair) == 0 {
-        0
       } else {
-        candidate_mask(
+        // A frequent first probe can match in both halves without leaving any
+        // starts that also match the middle probe. Check that before packing.
+        let midpoint = base + middle
+        let first_low = @simd.v128_and_(
+          first_low,
+          match_units(data, midpoint, middle_key),
+        )
+        let first_high = @simd.v128_and_(
+          first_high,
+          match_units(data, midpoint + 8, middle_key),
+        )
+        let second_low = @simd.v128_and_(
+          second_low,
+          match_units(data, midpoint + 16, middle_key),
+        )
+        let second_high = @simd.v128_and_(
+          second_high,
+          match_units(data, midpoint + 24, middle_key),
+        )
+        let first_pair = @simd.v128_or_(first_low, first_high)
+        let second_pair = @simd.v128_or_(second_low, second_high)
+        if @simd.i8x16_bitmask(@simd.v128_or_(first_pair, second_pair)) == 0 {
+          continue
+        }
+        let first_mask = candidate_mask(
           data,
-          base + middle + 16,
+          base + last,
+          last_key,
+          first_low,
+          first_high,
+        )
+        let second_mask = candidate_mask(
+          data,
           base + last + 16,
-          middle_key,
           last_key,
           second_low,
           second_high,
         )
+        first_mask | (second_mask << 16)
       }
-      first_mask | (second_mask << 16)
     } else {
       if @simd.i8x16_bitmask(first_pair) == 0 {
         continue
       }
-      candidate_mask(
+      filter_half(
         data,
         base + middle,
         base + last,

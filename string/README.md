@@ -8,7 +8,7 @@ larger string.
 ## Installation
 
 ```text
-moon add justjavac/string@0.1.1
+moon add justjavac/string@0.1.2
 ```
 
 ```moonbit
@@ -26,8 +26,9 @@ assert_eq(@string.replace_all(text, old="::", new=" / "), "猫😀 / 犬")
 
 ## Performance
 
-In current-source CI on Linux, macOS, and Windows, `find` with a match at the end of a
-65,536-code-unit view was **21–41% faster than MoonBit core on native** and
+In the CI snapshot from commit `8810ffa` on Linux, macOS, and Windows,
+`find` with a match at the end of a 65,536-code-unit view was **21–41% faster
+than MoonBit core on native** and
 **22–63% faster on linear-memory Wasm**. On the 4,096-code-unit periodic miss,
 the additional probe made `find` **30–60× as fast** across those two backends.
 JavaScript `equal` on two equal 65,536-code-unit subviews was **36–77× as
@@ -38,6 +39,9 @@ Delegating two-code-unit Wasm searches to core avoids redundant probes and
 full candidate verification. In a local Linux release build, 4,096-code-unit
 sparse splitting and replacement were **1.45–1.60× as fast as 0.1.1** across
 both measurement orders.
+
+In the local comparison for 0.1.2, a mixed UTF-16 miss was
+**1.26–1.49× as fast on native** and **1.44–1.60× as fast on Wasm**.
 
 ## API compatibility
 
@@ -72,8 +76,11 @@ available on the same `String` and `StringView` values.
   their masks together. On a hit, bit scans select the first or last match.
 - Literal substring search compares up to three needle positions. The
   StringZilla probe selection looks near the beginning, midpoint, and end to
-  prefer distinct code units. Longer searches check the first probe across
-  32 candidate starts, then apply the other two probes to halves with matches.
+  prefer distinct code units. Longer searches check up to 32 candidate starts
+  at once. If the first probe hits in only one half, the other probes scan
+  that half. If it hits in both halves, the search intersects the first two
+  probe masks before applying the third probe. The end probe goes before the
+  midpoint probe when the midpoint repeats the first probe's code unit.
   Full equality verifies each surviving candidate. After 16 failed
   verifications, core searches the remaining view. Core's
   linear fallback bounds the worst-case search by the sum of the input and

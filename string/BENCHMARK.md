@@ -69,7 +69,40 @@ Both implementations use the same prepared StringViews. Timings include complete
 | windows / js | equal-long | 65536 | 2591.042 | 93405.204 |
 | windows / js | replace-all-sparse | 4096 | 162.642 | 202.5* |
 
-## Runners
+## Local CPU sampling and probe filtering
+
+On Linux x86-64 (WSL2, Intel Core i7-13650HX), `gprofng` attributed 45.9% of
+sampled CPU time in the baseline mixed UTF-16 scan to `candidate_mask`.
+`objdump` showed that each call loaded the two remaining probes and packed
+their results even when the first two probes had no candidate start in
+common. The new scan can reject the whole block at that point. A block with
+hits in only one half finishes the probe checks for that half.
+
+The release benchmark compared `015ef28` with the updated code in one
+process per backend using prepared views at offset one. Each measurement
+order used ten batch samples per case. The ranges divide the baseline mean
+by the new mean across both orders and both search directions. An asterisk
+marks at least one measurement with CV ≥ 5%.
+
+| Workload | Native | Wasm |
+| --- | ---: | ---: |
+| Mixed UTF-16 miss, 65,000 units | 1.26–1.49×* | 1.44–1.60× |
+| Repeated four-unit needle in alternating ASCII, 65,536 units | 1.37–2.38×* | 1.45–1.62×* |
+| Near-matches in one half per block, 65,536 units | 0.91–0.98×* | 0.92–1.12×* |
+| Periodic verification fallback, 8,257 units | 0.77–1.01×* | 0.93–1.01×* |
+| Two-unit needle, 24-unit view | 0.51–1.03×* | 0.81–1.05×* |
+
+The mixed miss searches for `"a中😀"` in `"a😀中b".repeat(13000)`. Every
+probe's code unit occurs in the text. In the baseline-first order, the
+forward mean fell from 9.26 to 6.88 μs on native and from 12.82 to 8.18 μs
+on Wasm. The Wasm one-half reverse mean rose from 8.94 to 9.69 μs in the
+candidate-first order. The native 24-unit reverse search took about 12 ns
+for both versions in one order and about 12 versus 24 ns in the other.
+
+These local runs used Moon `0.1.20261126` (`ccd306a`) and
+`moonc v1.0.0-rc1+3c0520448`.
+
+## CI runners
 
 - linux · AMD EPYC 9V74 80-Core Processor (x86_64)
 - macos · Apple M1 (Virtual) (arm64)
