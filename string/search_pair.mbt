@@ -1,4 +1,81 @@
 ///|
+/// Uses the eight-lane pair kernel through 32 code units on native.
+#cfg(target="native")
+const SHORT_PAIR_LIMIT = 32
+
+///|
+/// Uses the eight-lane pair kernel through 24 code units on linear-memory Wasm.
+#cfg(target="wasm")
+const SHORT_PAIR_LIMIT = 24
+
+///|
+/// Uses the short exact-pair kernel when it can scan a full eight-lane block.
+#cfg(any(target="native", target="wasm"))
+#inline
+fn find_pair(text : StringView, needle : StringView, reverse~ : Bool) -> Int32? {
+  let candidates = text.length() - 1
+  if candidates >= 8 && candidates < SHORT_PAIR_LIMIT {
+    return find_short_pair(
+      text,
+      needle.unsafe_get(0),
+      needle.unsafe_get(1),
+      reverse~,
+    )
+  }
+  if candidates >= SHORT_PAIR_LIMIT {
+    return find_substring(text, needle, reverse~)
+  }
+  if reverse {
+    text.rev_find(needle)
+  } else {
+    text.find(needle)
+  }
+}
+
+///|
+/// Matches both units in eight candidate lanes at a time. The view has at least nine units.
+#cfg(any(target="native", target="wasm"))
+fn find_short_pair(
+  text : StringView,
+  first : UInt16,
+  second : UInt16,
+  reverse~ : Bool,
+) -> Int32? {
+  let data = text.data()
+  let start = text.start_offset()
+  let end = text.length() - 1
+  let edge = if reverse { end - 1 } else { 0 }
+  let first_difference = data.unsafe_get(start + edge) ^ first
+  let last_difference = data.unsafe_get(start + edge + 1) ^ second
+  if (first_difference | last_difference) == 0 {
+    return Some(edge)
+  }
+  let first_key = @simd.i16x8_splat(first)
+  let second_key = @simd.i16x8_splat(second)
+  let last_block = end - 8
+  let remainder = last_block % 8
+  let initial_step = if remainder == 0 { 8 } else { remainder }
+  for scanned = 0, step = initial_step; scanned <= last_block; {
+    let block = if reverse { last_block - scanned } else { scanned }
+    let offset = start + block
+    // The second load ends at offset + 8, inside the view. Each matching
+    // 16-bit lane yields two set bits in the byte mask.
+    let matches = @simd.v128_and_(
+      match_units(data, offset, first_key),
+      match_units(data, offset + 1, second_key),
+    )
+    let bits = @simd.i8x16_bitmask(matches)
+    if bits != 0 {
+      return Some(block + (match_lane(bits, reverse~) >> 1))
+    }
+    // An overlapping second block puts the rest of the scan on eight-start steps.
+    continue scanned + step, 8
+  } nobreak {
+    None
+  }
+}
+
+///|
 /// Scans complete pairs of the same code unit using adjacent bits in one mask.
 /// The caller guarantees at least 33 code units in `text`.
 #cfg(any(target="native", target="wasm"))

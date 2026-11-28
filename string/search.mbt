@@ -6,6 +6,7 @@ pub fn find(text : StringView, needle : StringView) -> Int32? {
   match needle.length() {
     0 => Some(0)
     1 => find_code_unit(text, needle.unsafe_get(0))
+    2 => find_pair(text, needle, reverse=false)
     len =>
       if text.length() - len < 15 {
         text.find(needle)
@@ -23,6 +24,7 @@ pub fn rev_find(text : StringView, needle : StringView) -> Int32? {
   match needle.length() {
     0 => Some(text.length())
     1 => rev_find_code_unit(text, needle.unsafe_get(0))
+    2 => find_pair(text, needle, reverse=true)
     len =>
       if text.length() - len < 15 {
         text.rev_find(needle)
@@ -72,6 +74,18 @@ fn find_substring(
   needle : StringView,
   reverse~ : Bool,
 ) -> Int32? {
+  if reverse {
+    text.rev_find(needle)
+  } else {
+    text.find(needle)
+  }
+}
+
+///|
+/// Uses core's pair search on backends without a local vector kernel.
+#cfg(not(any(target="native", target="wasm")))
+#inline
+fn find_pair(text : StringView, needle : StringView, reverse~ : Bool) -> Int32? {
   if reverse {
     text.rev_find(needle)
   } else {

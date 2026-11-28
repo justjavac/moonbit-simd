@@ -137,6 +137,42 @@ The 24-unit Wasm forward control measured 40.0 ns before and 46.4 ns
 after in the baseline-first order. The candidate-first order showed
 higher variability in both versions.
 
+## Local short-pair search
+
+CPU sampling of the 24-unit end-position hit included the generic
+substring dispatcher and core's two-anchor search. The specialized loop
+intersects comparisons on overlapping windows and takes one byte mask for
+eight exact candidate starts. Native disassembly shows two `pcmpeqw`
+instructions, `pand`, and `pmovmskb`. The Wasm loop uses `v128.and`
+and `i8x16.bitmask`. LLVM MCA models the native load-through-mask
+sequence and its zero-test branch at 1.3 cycles of reciprocal throughput
+on Alder Lake.
+
+For 65,536 forward end-position hits, Cachegrind counted 41.22 million
+instructions before and 33.62 million after. Simulated branches fell from
+10.17 million to 8.73 million. Both totals include the same setup.
+
+Linux x86-64 release builds on an Intel Core i7-13650HX compared
+`5eaab10` with the updated code in one process on views at offset one.
+The toolchain used Moon `0.1.20261126` and `moonc v1.0.0-rc1+3c0520448`.
+Ranges divide the baseline mean by the updated mean across both
+measurement orders and search directions. Each mean used ten batch
+samples. An asterisk marks at least one measurement with CV ≥ 5%.
+
+| Workload | Native | Wasm |
+| --- | ---: | ---: |
+| 15-unit interior hit | 1.10–1.41×* | 1.00–1.29×* |
+| 24-unit alternating ASCII miss | 1.34–1.78×* | 1.04–1.15×* |
+| 24-unit end-position hit | 1.37–1.72×* | 0.97–1.36×* |
+| 32-unit interior hit | 1.09–1.39×* | 0.96–1.17×* |
+| Long repeated-pair miss | 0.92–1.12×* | 0.97–1.06×* |
+| Long three-probe near-miss | 0.92–1.03×* | 0.95–1.07×* |
+
+On Wasm, the 32-unit prototype varied across runs, so the selected
+eight-start scan covers views through 24 units. The separate trial that
+checked the end probe first in an active half improved end-probe misses
+by 8–13% and increased midpoint-miss latency by about 4–11%.
+
 ## CI runners
 
 - linux · AMD EPYC 9V74 80-Core Processor (x86_64)

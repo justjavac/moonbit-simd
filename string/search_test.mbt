@@ -232,3 +232,29 @@ test "two-unit search matches the code-unit oracle across every block and tail" 
   assert_eq(@string.find(clipped, "aa"), None)
   assert_eq(@string.rev_find(clipped, "aa"), None)
 }
+
+///|
+test "short pair search orders hits across overlapping SIMD blocks" {
+  let needle : StringView = "bc"
+  for length in [9, 15, 17, 24, 32] {
+    for first in 0..<(length - 3) {
+      for last in (first + 2)..<(length - 1) {
+        let body = "z".repeat(first) +
+          needle.to_owned() +
+          "z".repeat(last - first - 2) +
+          needle.to_owned() +
+          "z".repeat(length - last - 2)
+        let backing = "xbc" + body + "bc"
+        let view = backing[3:3 + length]
+        assert_eq(@string.find(view, needle), Some(first))
+        assert_eq(@string.rev_find(view, needle), Some(last))
+      }
+    }
+  }
+
+  let body = "z".repeat(7) + "aaa" + "z".repeat(14)
+  let backing = "x" + body + "x"
+  let view = backing[1:1 + body.length()]
+  assert_eq(@string.find(view, "aa"), Some(7))
+  assert_eq(@string.rev_find(view, "aa"), Some(8))
+}
