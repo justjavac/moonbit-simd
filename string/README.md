@@ -8,7 +8,7 @@ larger string.
 ## Installation
 
 ```text
-moon add justjavac/string@0.1.3
+moon add justjavac/string@0.1.4
 ```
 
 ```moonbit
@@ -45,6 +45,11 @@ In the local comparison for 0.1.2, a mixed UTF-16 miss was
 In the local comparison for 0.1.3, a long view with no `::` match was
 **1.19–1.29× as fast on native** and **1.64–1.95× as fast on Wasm**
 as 0.1.2.
+
+In the local comparison for 0.1.4, the 24-code-unit alternating ASCII
+miss ran **1.34–1.78× as fast on native** and **1.04–1.15× as fast on
+Wasm** as 0.1.3. Some measurements had a coefficient of variation of
+at least 5%. [Short-pair results](BENCHMARK.md#local-short-pair-search)
 
 ## API compatibility
 
@@ -92,6 +97,8 @@ available on the same `String` and `StringView` values.
   unit uses a single equality mask per 32 candidate starts. Intersecting
   adjacent bits, with one in-bounds lookahead, identifies exact pairs in
   either direction.
+- Short two-unit searches use two overlapping SIMD loads. Intersecting
+  the two comparisons matches both units in each candidate lane.
 - Linear-memory Wasm equality combines four eight-lane XOR comparisons.
   JavaScript uses the engine's string comparison for ranges of 32 code units
   or more and checks the first four units before forming substrings. Every
@@ -100,8 +107,8 @@ available on the same `String` and `StringView` values.
 
 | Backend | Dispatch |
 | --- | --- |
-| `native` | V128 searches from 32 code units for a single unit, 32 complete starts for a repeated pair, and 16 complete starts for longer needles. The three-probe filter also handles two distinct units from 64 starts. Longer needles use 32-start blocks from 64 candidates. Core handles shorter inputs, general search tails, and equality. |
-| `wasm` | The same V128 search thresholds for single units, repeated pairs, and longer needles. Core handles two distinct units and repeated pairs below 32 starts. Grouped equality starts at 32 units. The Wasm host must support SIMD. |
+| `native` | V128 searches from 32 code units for a single unit and 16 complete starts for needles of three or more units. Two-unit needles use eight-start blocks in 9- to 32-unit views. With 32 or more starts, repeated pairs use 32-start blocks. The three-probe filter handles two distinct units from 64 starts and also grows to 32-start blocks for longer needles at that threshold. Core handles other input lengths, general search tails, and equality. |
+| `wasm` | Short pairs use eight-start blocks in 9- to 24-unit views. Single units, repeated pairs, and needles of three or more units use the native SIMD thresholds. Core handles two-unit searches outside those ranges. Grouped equality starts at 32 units. The Wasm host must support SIMD. |
 | `wasm-gc` | Core search and range equality. |
 | `js` | Core search and short range equality. Long ranges use bounded JavaScript string comparison. |
 
