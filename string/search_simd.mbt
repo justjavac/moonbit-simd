@@ -169,8 +169,13 @@ fn find_substring(
   let len = text.length()
   let needle_len = needle.length()
   let candidates = len - needle_len + 1
-  if needle_len == 2 && (!SIMD_TWO_UNIT_SEARCH || candidates < 64) {
-    return if reverse { text.rev_find(needle) } else { text.find(needle) }
+  if needle_len == 2 {
+    if candidates >= 32 && needle.unsafe_get(0) == needle.unsafe_get(1) {
+      return find_repeated_pair(text, needle.unsafe_get(0), reverse~)
+    }
+    if !SIMD_TWO_UNIT_SEARCH || candidates < 64 {
+      return if reverse { text.rev_find(needle) } else { text.find(needle) }
+    }
   }
   let data = text.data()
   let start = text.start_offset()

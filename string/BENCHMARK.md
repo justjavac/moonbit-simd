@@ -102,6 +102,41 @@ for both versions in one order and about 12 versus 24 ns in the other.
 These local runs used Moon `0.1.20261126` (`ccd306a`) and
 `moonc v1.0.0-rc1+3c0520448`.
 
+## Local repeated-pair search
+
+CPU sampling with `gprofng` located the alternating-input miss inside
+`find_substring`. For a needle like `aa`, the specialized scan compares
+each UTF-16 unit once and intersects the packed equality mask with its
+right-shifted copy. One in-view lookahead completes the final lane.
+Native disassembly shows that the lookahead uses `sete`, followed by
+`shrd` and `and` to form the pair mask. The Wasm output also uses
+vector comparisons and an unsigned right shift.
+
+For 1,024 forward calls on 65,536 alternating ASCII units, Cachegrind
+counted 163.82 million instructions before and 117.09 million after.
+Simulated branches fell from 19.26 million to 12.89 million. Both totals
+include the same benchmark setup.
+
+Linux x86-64 release builds on an Intel Core i7-13650HX used Moon
+`0.1.20261126` and `moonc v1.0.0-rc1+3c0520448`. This comparison ran
+`dd2153c` and the new implementation in the same process on prepared
+one-unit-offset views. Ranges cover both implementation orders and
+both search directions unless specified. Each mean used ten batch samples.
+An asterisk marks at least one measurement with CV ≥ 5%.
+
+| Workload | Native | Wasm |
+| --- | ---: | ---: |
+| `aa` in alternating ASCII, 65,536 units | 1.32–1.37× | 1.15–1.37×* |
+| `::` absent, 65,534 units | 1.19–1.29× | 1.64–1.95× |
+| `::` at the end, forward, 65,536 units | 1.26–1.27×* | 1.88–1.90× |
+| `::` at offset 31, 76 units | 1.59–2.37×* | 1.02–1.44×* |
+| Three-probe near-misses, 65,536 units | 1.00–1.08× | 1.15–1.35×* |
+| Two distinct units, 24-unit view | 1.06–1.25×* | 0.70–1.72×* |
+
+The 24-unit Wasm forward control measured 40.0 ns before and 46.4 ns
+after in the baseline-first order. The candidate-first order showed
+higher variability in both versions.
+
 ## CI runners
 
 - linux · AMD EPYC 9V74 80-Core Processor (x86_64)
