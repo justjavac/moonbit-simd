@@ -142,3 +142,41 @@ test "wide probes preserve match order across both halves of a block" {
     assert_eq(@string.rev_find(view, needle), Some(last))
   }
 }
+
+///|
+test "wide search handles frequent probes and third-probe misses" {
+  let filler = "a😀中b".repeat(19)
+  let near_match = "a中😁"
+  let needle = "a中😀"
+  let without_match = filler + near_match + filler
+  let excluded = needle + without_match + needle
+  let view = excluded[4:4 + without_match.length()]
+  assert_eq(@string.find(view, needle), None)
+  assert_eq(@string.rev_find(view, needle), None)
+
+  let separated = filler + needle + without_match + needle + filler
+  let backing = "x" + separated + "x"
+  let view = backing[1:1 + separated.length()]
+  assert_eq(@string.find(view, needle), Some(filler.length()))
+  assert_eq(
+    @string.rev_find(view, needle),
+    Some(filler.length() + needle.length() + without_match.length()),
+  )
+}
+
+///|
+test "wide search handles misses and overlapping hits for a repeated needle" {
+  let alternating = "ab".repeat(39)
+  let needle = "aaaa"
+  let excluded = needle + alternating + needle
+  let view = excluded[4:4 + alternating.length()]
+  assert_eq(@string.find(view, needle), None)
+  assert_eq(@string.rev_find(view, needle), None)
+
+  let body = alternating + needle + alternating
+  let backing = "x" + body + "x"
+  let view = backing[1:1 + body.length()]
+  assert_eq(@string.find(view, needle), Some(alternating.length()))
+  // The first unit of the trailing alternating run extends the match by one.
+  assert_eq(@string.rev_find(view, needle), Some(alternating.length() + 1))
+}
