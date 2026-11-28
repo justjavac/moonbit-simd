@@ -180,3 +180,55 @@ test "wide search handles misses and overlapping hits for a repeated needle" {
   // The first unit of the trailing alternating run extends the match by one.
   assert_eq(@string.rev_find(view, needle), Some(alternating.length() + 1))
 }
+
+///|
+test "two-unit search matches the code-unit oracle across every block and tail" {
+  let lower_then_upper = "😀😁".unsafe_view(start=1, end=3)
+  let upper = "😀".unsafe_view(start=0, end=1).to_owned()
+  let needles : Array[StringView] = [
+    "ab",
+    "aa",
+    "中中",
+    "😀",
+    lower_then_upper,
+    upper + upper,
+  ]
+  for needle in needles {
+    let pair = needle.to_owned()
+    assert_eq(pair.length(), 2)
+    assert_eq(pair.unsafe_get(0), needle[0])
+    assert_eq(pair.unsafe_get(1), needle[1])
+    for length in 0..<=72 {
+      let sentinels = "x" + pair + "z".repeat(length) + pair
+      let view = sentinels.unsafe_view(start=3, end=3 + length)
+      assert_eq(@string.find(view, needle), None)
+      assert_eq(@string.rev_find(view, needle), None)
+      for start in 0..<(length - 1).max(0) {
+        let body = "z".repeat(start) + pair + "z".repeat(length - start - 2)
+        let backing = "x" + pair + body + pair
+        let view = backing.unsafe_view(start=3, end=3 + length)
+        assert_eq(
+          @string.find(view, needle),
+          naive_find(view, needle, reverse=false),
+        )
+        assert_eq(
+          @string.rev_find(view, needle),
+          naive_find(view, needle, reverse=true),
+        )
+      }
+    }
+  }
+  let overlapping = ("x" + "a".repeat(70) + "x")[1:71]
+  assert_eq(@string.find(overlapping, "aa"), Some(0))
+  assert_eq(@string.rev_find(overlapping, "aa"), Some(68))
+  let interior = "z".repeat(31) + "aaa" + "z".repeat(40)
+  let backing = "x" + interior + "x"
+  let view = backing[1:1 + interior.length()]
+  assert_eq(@string.find(view, "aa"), Some(31))
+  assert_eq(@string.rev_find(view, "aa"), Some(32))
+
+  let backing = "aa" + "z".repeat(64) + "aa"
+  let clipped = backing[1:backing.length() - 1]
+  assert_eq(@string.find(clipped, "aa"), None)
+  assert_eq(@string.rev_find(clipped, "aa"), None)
+}

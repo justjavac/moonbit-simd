@@ -8,7 +8,7 @@ larger string.
 ## Installation
 
 ```text
-moon add justjavac/string@0.1.2
+moon add justjavac/string@0.1.3
 ```
 
 ```moonbit
@@ -35,13 +35,16 @@ JavaScript `equal` on two equal 65,536-code-unit subviews was **36–77× as
 fast as core**. These results are workload-specific, and some runs had a
 coefficient of variation of at least 5%. [Benchmarks](BENCHMARK.md)
 
-Delegating two-code-unit Wasm searches to core avoids redundant probes and
-full candidate verification. In a local Linux release build, 4,096-code-unit
-sparse splitting and replacement were **1.45–1.60× as fast as 0.1.1** across
-both measurement orders.
+In the 0.1.2 local Wasm comparison, delegating two-code-unit searches to
+core made 4,096-code-unit sparse splitting and replacement **1.45–1.60×
+as fast as 0.1.1** across both measurement orders.
 
 In the local comparison for 0.1.2, a mixed UTF-16 miss was
 **1.26–1.49× as fast on native** and **1.44–1.60× as fast on Wasm**.
+
+In the local comparison for 0.1.3, a long view with no `::` match was
+**1.19–1.29× as fast on native** and **1.64–1.95× as fast on Wasm**
+as 0.1.2.
 
 ## API compatibility
 
@@ -85,6 +88,10 @@ available on the same `String` and `StringView` values.
   verifications, core searches the remaining view. Core's
   linear fallback bounds the worst-case search by the sum of the input and
   needle lengths.
+- On native and linear-memory Wasm, a two-unit needle made of the same code
+  unit uses a single equality mask per 32 candidate starts. Intersecting
+  adjacent bits, with one in-bounds lookahead, identifies exact pairs in
+  either direction.
 - Linear-memory Wasm equality combines four eight-lane XOR comparisons.
   JavaScript uses the engine's string comparison for ranges of 32 code units
   or more and checks the first four units before forming substrings. Every
@@ -93,8 +100,8 @@ available on the same `String` and `StringView` values.
 
 | Backend | Dispatch |
 | --- | --- |
-| `native` | V128 searches from 32 code units for a single unit and 16 complete starts for a substring. Substring blocks grow from 16 to 32 starts when there are at least 64 candidates. Core handles two-unit needles below 64 starts, shorter input, tails, and equality. |
-| `wasm` | The same V128 search thresholds, with two-unit needles delegated to core and grouped equality starting at 32 units. The Wasm host must support SIMD. |
+| `native` | V128 searches from 32 code units for a single unit, 32 complete starts for a repeated pair, and 16 complete starts for longer needles. The three-probe filter also handles two distinct units from 64 starts. Longer needles use 32-start blocks from 64 candidates. Core handles shorter inputs, general search tails, and equality. |
+| `wasm` | The same V128 search thresholds for single units, repeated pairs, and longer needles. Core handles two distinct units and repeated pairs below 32 starts. Grouped equality starts at 32 units. The Wasm host must support SIMD. |
 | `wasm-gc` | Core search and range equality. |
 | `js` | Core search and short range equality. Long ranges use bounded JavaScript string comparison. |
 
